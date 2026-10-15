@@ -8,11 +8,6 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0e18'/%3E%3Cpath d='M8 22V10l8 6 8-6v12' stroke='%2322d3ee' stroke-width='3' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E" />
 </head>
 <body>
-<div class="aurora" aria-hidden="true">
-  <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span>
-  <div class="grid-overlay"></div>
-</div>
-
 <header class="topbar">
   <div class="brand">
     <svg viewBox="0 0 32 32" class="logo" aria-hidden="true">
@@ -41,10 +36,11 @@
   <div class="content">
     <section class="overview" data-view="overview" id="overview">
       <div class="overview-heading">
-        <div><p class="eyebrow">BENCHMARK OVERVIEW</p><h2>このPCのAI性能</h2><p class="overview-machine" id="overviewMachine">計測結果を読み込み中…</p></div>
+        <div><p class="eyebrow">計測結果の概要</p><h2>AI処理の速さを比べる</h2><p class="overview-machine" id="overviewMachine">計測結果を読み込み中…</p></div>
         <a class="text-link" href="#history" id="overviewDate">過去の結果を見る →</a>
       </div>
       <div class="overview-status" id="overviewStatus" role="status">保存済みの計測結果を確認しています。</div>
+      <p class="comparison-guide">CPUを <b>1.00倍</b> とした処理速度です。<b>数値が大きいほど高速</b>です。</p>
       <div class="device-summary" id="overviewDevices"></div>
       <div class="overview-foot">
         <p id="overviewCoverage">計測を始めると、ここに結果を表示します。</p>
@@ -132,7 +128,7 @@
 <div class="modal-backdrop" id="runModal" hidden>
   <div class="modal">
     <h2>計測設定</h2>
-    <p class="modal-sub">Targets are verified with a 1 ms probe in an isolated process before the suite commits to them.</p>
+    <p class="modal-sub">選択した機器の動作を確認してから、同じ条件で性能を測定します。</p>
     <div class="field">
       <label>機器</label>
       <div class="checks" id="targetChecks"></div>
@@ -147,11 +143,11 @@
       <div class="field"><label>CPUスレッド数</label><input type="number" id="optThreads" min="1" max="128" placeholder="physical cores" /></div>
     </div>
     <div class="field toggles">
-      <label class="toggle"><input type="checkbox" id="optInt8" checked /><span>INT8 variants</span></label>
-      <label class="toggle"><input type="checkbox" id="optCheck" checked /><span>verify outputs vs CPU reference</span></label>
-      <label class="toggle"><input type="checkbox" id="optPower" checked /><span>sample power / energy</span></label>
-      <label class="toggle"><input type="checkbox" id="optBattery" /><span>allow running on battery</span></label>
-      <label class="toggle"><input type="checkbox" id="optQuick" /><span>quick mode (1 repeat, low confidence)</span></label>
+      <label class="toggle"><input type="checkbox" id="optInt8" checked /><span>INT8（軽量化したモデル）も測定する</span></label>
+      <label class="toggle"><input type="checkbox" id="optCheck" checked /><span>CPUの結果と照合して正しさを確認する</span></label>
+      <label class="toggle"><input type="checkbox" id="optPower" checked /><span>消費電力を測定する</span></label>
+      <label class="toggle"><input type="checkbox" id="optBattery" /><span>バッテリー駆動でも実行する</span></label>
+      <label class="toggle"><input type="checkbox" id="optQuick" /><span>簡易測定（1回のみ・精度は低め）</span></label>
     </div>
     <div class="modal-actions">
       <button class="btn ghost" id="cancelRun">キャンセル</button>
