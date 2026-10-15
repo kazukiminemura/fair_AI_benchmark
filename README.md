@@ -55,10 +55,11 @@ adds Intel's CPU/iGPU/NPU plugin. GPU runtimes are handled separately — see
 below. `pip install -r requirements.txt` still works if you would rather not
 use uv.
 
-The dashboard is a local single-page app at `http://127.0.0.1:8765` — device
-matrix, AI index, per-workload throughput, a profile radar chart, the full
-result table and a provenance panel. It can start runs, watch them live, and
-browse every saved result in `results/`.
+The dashboard is a local single-page app at `http://127.0.0.1:8765`. Its overview
+shows CPU/GPU/NPU speed ratios, measurement coverage and validity at a glance.
+Links open separate views for measurements, device setup, validity checks,
+history and methodology. Detail URLs keep the selected result after a reload.
+It can start runs, watch them live, and browse saved results in `results/`.
 
 ## The device matrix
 

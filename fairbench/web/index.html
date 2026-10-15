@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -24,31 +24,42 @@
     </svg>
     <div class="brand-text">
       <h1>fairbench</h1>
-      <p>identical work · identical measurement · Intel vs AMD</p>
+      <p>CPU・GPU・NPUのAI性能を比較</p>
     </div>
   </div>
-  <div class="host-chips" id="hostChips"></div>
+  <div class="host-chips" id="hostChips" data-view="devices" hidden></div>
   <div class="topbar-actions">
-    <button class="btn ghost" id="refreshBtn" title="Re-read this machine and its runtimes">refresh</button>
-    <button class="btn primary" id="newRunBtn">new run</button>
+    <button class="btn ghost" id="refreshBtn" title="Re-read this machine and its runtimes">機器を再検出</button>
+    <button class="btn primary" id="newRunBtn">計測を始める</button>
   </div>
 </header>
 
+<nav class="view-nav" aria-label="画面切り替え">
+  <a href="#overview">概要</a><a href="#performance">測定データ</a><a href="#devices">機器情報</a><a href="#environment">信頼性・条件</a><a href="#history">実行履歴</a>
+</nav>
 <main class="layout">
-  <aside class="sidebar">
-    <section class="panel">
-      <h2 class="panel-title">runs <span class="count" id="runCount">0</span></h2>
-      <div class="run-list" id="runList"></div>
-    </section>
-
-    <section class="panel methodology-panel">
-      <h2 class="panel-title">how this stays fair</h2>
-      <ol class="method-list" id="methodList"></ol>
-    </section>
-  </aside>
-
   <div class="content">
-    <section class="hero" id="hero">
+    <section class="overview" data-view="overview" id="overview">
+      <div class="overview-heading">
+        <div><p class="eyebrow">BENCHMARK OVERVIEW</p><h2>このPCのAI性能</h2><p class="overview-machine" id="overviewMachine">計測結果を読み込み中…</p></div>
+        <a class="text-link" href="#history" id="overviewDate">過去の結果を見る →</a>
+      </div>
+      <div class="overview-status" id="overviewStatus" role="status">保存済みの計測結果を確認しています。</div>
+      <div class="device-summary" id="overviewDevices"></div>
+      <div class="overview-foot">
+        <p id="overviewCoverage">計測を始めると、ここに結果を表示します。</p>
+      </div>
+      <div class="overview-links">
+        <a href="#environment"><b>結果を信頼できる？</b><span>安定性・正解照合・電源状態 →</span></a>
+        <a href="#devices"><b>GPU・NPUを使うには？</b><span>機器の検出状況と設定 →</span></a>
+        <a href="#method"><b>何をどう比べている？</b><span>計測方法と指標の読み方 →</span></a>
+      </div>
+    </section>
+    <div class="detail-header" data-view="performance devices environment history method activity" hidden>
+      <a class="text-link" href="#overview">← 概要に戻る</a><h2 id="viewTitle"></h2>
+    </div>
+
+    <section class="hero" id="hero" data-view="performance environment" hidden>
       <div class="hero-main">
         <div class="hero-eyebrow" id="heroEyebrow">no data</div>
         <h2 class="hero-title" id="heroTitle">waiting for a run</h2>
@@ -65,65 +76,75 @@
         <button class="btn ghost small" id="stopBtn">stop</button>
       </div>
       <div class="progress"><div class="progress-fill" id="progressFill"></div><span id="progressText"></span></div>
-      <div class="live-log" id="liveLog"></div>
+      <a class="text-link" href="#activity">実行ログを見る →</a>
+      <div class="live-log" id="liveLog" data-view="activity" hidden></div>
     </section>
 
-    <section class="section" id="matrixSection">
-      <h2 class="section-title"><span>device matrix</span><em>what this machine can actually run, per silicon</em></h2>
+    <section class="section" id="matrixSection" data-view="devices" hidden>
+      <h2 class="section-title"><span>機器の検出状況</span><em>このPCで計測できる機器と実行環境</em></h2>
       <div class="matrix" id="matrix"></div>
       <div class="matrix-notes" id="matrixNotes"></div>
     </section>
 
-    <div class="columns">
-      <section class="section panel chart-panel">
-        <h2 class="section-title"><span>AI index</span><em>geometric mean speed-up vs this machine's CPU</em></h2>
+    <div class="columns" data-view="performance environment" hidden>
+      <section class="section panel chart-panel" data-view="performance" hidden>
+        <h2 class="section-title"><span>AI index</span><em>このPCのCPUを1とした処理速度の倍率</em></h2>
         <div class="chart" id="indexChart"><p class="empty">run the suite to populate this chart</p></div>
       </section>
-      <section class="section panel grade-panel">
-        <h2 class="section-title"><span>environment grade</span><em>can these numbers be trusted?</em></h2>
+      <section class="section panel grade-panel" data-view="environment" hidden>
+        <h2 class="section-title"><span>結果の信頼性</span><em>安定性・正解照合・電源状態を確認</em></h2>
         <div class="grade" id="grade"></div>
       </section>
     </div>
 
-    <section class="section panel chart-panel">
-      <h2 class="section-title"><span>throughput by workload</span><em>bar length is relative to the fastest device in that workload; the number is absolute</em></h2>
+    <section class="section panel chart-panel" data-view="performance" hidden>
+      <h2 class="section-title"><span>テスト項目ごとの処理速度</span><em>棒は項目内の最速値を基準に表示。数値は1秒あたりの処理量</em></h2>
       <div class="legend" id="chartLegend"></div>
       <div class="chart" id="throughputChart"><p class="empty">run the suite to populate this chart</p></div>
     </section>
 
-    <section class="section panel chart-panel">
-      <h2 class="section-title"><span>profile</span><em>where each device wins: acceleration index by workload family</em></h2>
+    <section class="section panel chart-panel" data-view="performance" hidden>
+      <h2 class="section-title"><span>得意な処理の傾向</span><em>処理分野ごとのCPU比</em></h2>
       <div class="chart radar-wrap" id="radarChart"><p class="empty">run the suite to populate this chart</p></div>
     </section>
 
-    <section class="section panel">
-      <h2 class="section-title"><span>every measurement</span><em>raw, per device, per workload</em></h2>
+    <section class="section panel" data-view="performance" hidden>
+      <h2 class="section-title"><span>すべての測定値</span><em>機器・テスト項目ごとの詳細データ</em></h2>
       <div class="table-wrap"><table class="data-table" id="resultTable"></table></div>
     </section>
 
-    <section class="section panel provenance">
-      <h2 class="section-title"><span>provenance</span><em>enough to reproduce or to refute this run</em></h2>
+    <section class="section panel provenance" data-view="environment" hidden>
+      <h2 class="section-title"><span>計測条件・記録</span><em>PC構成、実行設定、注意事項</em></h2>
       <div class="provenance-grid" id="provenance"></div>
+    </section>
+    <section class="panel" data-view="history" hidden>
+      <h2 class="panel-title">実行履歴 <span class="count" id="runCount">0</span></h2>
+      <div class="run-list" id="runList"></div>
+    </section>
+
+    <section class="panel methodology-panel" data-view="method" hidden>
+      <h2 class="panel-title">公平な計測のために</h2>
+      <ol class="method-list" id="methodList"></ol>
     </section>
   </div>
 </main>
 
 <div class="modal-backdrop" id="runModal" hidden>
   <div class="modal">
-    <h2>start a run</h2>
+    <h2>計測設定</h2>
     <p class="modal-sub">Targets are verified with a 1 ms probe in an isolated process before the suite commits to them.</p>
     <div class="field">
-      <label>devices</label>
+      <label>機器</label>
       <div class="checks" id="targetChecks"></div>
     </div>
     <div class="field">
-      <label>workloads</label>
+      <label>テスト項目</label>
       <div class="checks" id="workloadChecks"></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>repeats</label><input type="number" id="optRepeats" min="1" max="10" value="3" /></div>
-      <div class="field"><label>seconds / cell</label><input type="number" id="optSeconds" min="1" max="120" value="4" /></div>
-      <div class="field"><label>cpu threads</label><input type="number" id="optThreads" min="1" max="128" placeholder="physical cores" /></div>
+      <div class="field"><label>繰り返し回数</label><input type="number" id="optRepeats" min="1" max="10" value="3" /></div>
+      <div class="field"><label>1件あたりの秒数</label><input type="number" id="optSeconds" min="1" max="120" value="4" /></div>
+      <div class="field"><label>CPUスレッド数</label><input type="number" id="optThreads" min="1" max="128" placeholder="physical cores" /></div>
     </div>
     <div class="field toggles">
       <label class="toggle"><input type="checkbox" id="optInt8" checked /><span>INT8 variants</span></label>
@@ -133,8 +154,8 @@
       <label class="toggle"><input type="checkbox" id="optQuick" /><span>quick mode (1 repeat, low confidence)</span></label>
     </div>
     <div class="modal-actions">
-      <button class="btn ghost" id="cancelRun">cancel</button>
-      <button class="btn primary" id="confirmRun">run benchmark</button>
+      <button class="btn ghost" id="cancelRun">キャンセル</button>
+      <button class="btn primary" id="confirmRun">計測開始</button>
     </div>
   </div>
 </div>
