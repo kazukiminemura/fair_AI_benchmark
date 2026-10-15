@@ -13,6 +13,7 @@ param(
     [string[]]$Targets,
     [string[]]$Workloads,
     [int]$Repeats = 0,
+    [switch]$AllowBattery,
     [switch]$NoServe
 )
 
@@ -38,10 +39,13 @@ $battery = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-
 if ($battery) {
     if ($battery.BatteryStatus -in 1) {
         Write-Host "  [!!] On battery. Clocks are capped and the result will not be comparable." -ForegroundColor Red
-        Write-Host "       Plug in, or add -AllowBattery once you know what you are doing."
-        exit 2
+        if (-not $AllowBattery) {
+            Write-Host "       Plug in, or add -AllowBattery to record the number anyway."
+            exit 2
+        }
+    } else {
+        Write-Host "  [ok] On AC power." -ForegroundColor Green
     }
-    Write-Host "  [ok] On AC power." -ForegroundColor Green
 } else {
     Write-Host "  [ok] No battery (desktop or VM)." -ForegroundColor Green
     Write-Host "       Energy per inference will be unavailable; everything else still works."
@@ -78,6 +82,7 @@ if ($Repeats -gt 0) { $runArgs += @("--repeats", "$Repeats") }
 if ($Targets)   { $runArgs += "--targets";   $runArgs += $Targets }
 if ($Workloads) { $runArgs += "--workloads"; $runArgs += $Workloads }
 if ($NoServe)   { $runArgs += "--no-open" }
+if ($AllowBattery) { $runArgs += "--allow-battery" }
 
 Write-Host ""
 Write-Host " fairbench $($runArgs -join ' ')" -ForegroundColor Magenta

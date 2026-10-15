@@ -160,7 +160,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"{c('HOST', BOLD)}  {fp.cpu.name}  {fp.cpu.physical_cores}C/{fp.cpu.logical_cores}T  "
           f"{fp.memory.total_gib} GiB")
     if fp.power.power_plan:
-        print(f"{c('POWER', BOLD)} {fp.power.power_plan}  ({'AC' if fp.power.on_ac else 'battery' if fp.battery_present else 'desktop'})")
+        print(f"{c('POWER', BOLD)} {fp.power.power_plan}  ({'AC' if fp.power.on_ac else 'battery' if fp.power.battery_present else 'desktop'})")
     if fp.power.battery_present and not fp.power.on_ac and not args.allow_battery:
         print(c("\n  Refusing to run: the laptop is on battery, which caps clocks.", YELLOW))
         print("  Plug in, or pass --allow-battery to record the number anyway.")
