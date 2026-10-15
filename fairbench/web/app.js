@@ -6,25 +6,25 @@
 const $ = (id) => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
 
-const KIND_COLOR = { cpu: '#22d3ee', gpu: '#a3e635', npu: '#d946ef' };
-const VENDOR_COLOR = { intel: '#4f9dff', amd: '#ff5a5f', nvidia: '#76b900', qualcomm: '#c084fc' };
+const KIND_COLOR = { cpu: '#2563eb', gpu: '#15803d', npu: '#7c3aed' };
+const VENDOR_COLOR = { intel: '#4f9dff', amd: '#ff5a5f', nvidia: '#3f7a0a', qualcomm: '#7c3aed' };
 
 const DEVICE_COLORS = {
-  'intel:cpu:ort': '#22d3ee',
-  'intel:cpu:openvino': '#38bdf8',
+  'intel:cpu:ort': '#2563eb',
+  'intel:cpu:openvino': '#0369a1',
   'intel:gpu:ort': '#7c8cff',
   'intel:gpu:openvino': '#4f9dff',
-  'intel:npu:ort': '#e879f9',
-  'intel:npu:openvino': '#d946ef',
-  'amd:cpu:ort': '#a3e635',
-  'amd:cpu:openvino': '#84cc16',
+  'intel:npu:ort': '#a21caf',
+  'intel:npu:openvino': '#9333ea',
+  'amd:cpu:ort': '#15803d',
+  'amd:cpu:openvino': '#4d7c0f',
   'amd:gpu:ort': '#ff5a5f',
   'amd:gpu:openvino': '#f97316',
   'amd:npu:ort': '#fb923c',
   'amd:npu:openvino': '#f59e0b',
-  'nvidia:gpu:ort': '#76b900',
-  'nvidia:gpu:openvino': '#a3e635',
-  'qualcomm:npu:ort': '#c084fc',
+  'nvidia:gpu:ort': '#3f7a0a',
+  'nvidia:gpu:openvino': '#15803d',
+  'qualcomm:npu:ort': '#7c3aed',
 };
 
 const METHOD = [
@@ -293,39 +293,48 @@ function renderOverview() {
   const failed = checks.filter((c) => c.status === 'fail').length;
   const warned = checks.filter((c) => c.status === 'warn').length;
   const status = $('overviewStatus');
-  status.className = 'overview-status ' + (failed ? 'needs-check' : warned ? 'caution' : '');
+  status.className = 'overview-status ' + (!rep ? 'empty-state' : failed ? 'needs-check' : warned ? 'caution' : '');
   status.replaceChildren();
   const verdict = state.run?.active ? (rep ? '計測中 · 前回の結果を表示' : '計測中')
     : !rep ? 'まだ計測結果がありません' : failed ? '結果は要確認' : warned ? '注意点のある結果' : '計測完了';
   status.appendChild(el('strong', {}, verdict));
   status.appendChild(el('span', {}, !rep ? '右上の「計測を始める」から開始できます。'
-    : `信頼性 ${rep.grade?.letter || '—'} · 要確認 ${failed}件 / 注意 ${warned}件`));
+    : `確認が必要な項目 ${failed}件 ・ 注意 ${warned}件`));
   if (rep) status.appendChild(el('a', { href: '#environment' }, '理由を見る →'));
 
   const rows = (rep?.results || []).filter((r) => r.ok);
   const indices = (rep?.scores?.ai_index || []).filter((r) => Number.isFinite(r.ai_index) && r.ai_index > 0);
+  const baselineId = rep?.scores?.baseline?.target_id;
+  const maxIndex = Math.max(1, ...indices.filter((r) => r.kind !== 'cpu' || r.target_id === baselineId).map((r) => r.ai_index));
   const host = $('overviewDevices');
   host.replaceChildren();
   for (const [kind, name] of [['cpu', 'CPU'], ['gpu', 'GPU'], ['npu', 'NPU']]) {
     const measured = rows.filter((r) => r.kind === kind);
-    const best = indices.filter((r) => r.kind === kind).sort((a, b) => b.ai_index - a.ai_index)[0];
-    const baselineId = rep?.scores?.baseline?.target_id;
-    const card = el('article', { class: 'device-card', style: `--accent:${KIND_COLOR[kind]}` });
+    const candidates = indices.filter((r) => r.kind === kind).sort((a, b) => b.ai_index - a.ai_index);
+    const best = (kind === 'cpu' && candidates.find((r) => r.target_id === baselineId)) || candidates[0];
+    const card = el('article', { class: 'device-card' + (measured.length ? '' : ' unmeasured'), style: `--accent:${KIND_COLOR[kind]}` });
     const title = el('div', { class: 'device-card-heading' });
     title.append(el('h3', {}, name), el('span', {}, measured.length ? '計測済み' : '未計測'));
     card.appendChild(title);
-    card.appendChild(el('div', { class: 'device-index' }, best ? `${fmt(best.ai_index)}×` : measured.length ? '比較なし' : '—'));
-    const definition = best ? (best.target_id === baselineId ? 'CPUの基準値' : 'CPUを1とした処理速度')
-      : measured.length ? 'CPUの比較基準がありません' : 'この結果には計測データがありません';
+    card.appendChild(el('p', { class: 'device-role' }, { cpu: '基本の処理', gpu: '画像・並列処理', npu: 'AI専用の処理' }[kind]));
+    const value = el('div', { class: 'device-index' }, best ? fmt(best.ai_index) : measured.length ? '比較なし' : '未計測');
+    if (best) value.appendChild(el('small', {}, '倍'));
+    card.appendChild(value);
+    const meter = el('div', { class: 'device-meter', 'aria-hidden': 'true' });
+    if (best) meter.appendChild(el('span', { style: `width:${100 * best.ai_index / maxIndex}%` }));
+    card.appendChild(meter);
+    const definition = best ? (best.target_id === baselineId ? '比較の基準となるCPUです' : 'CPUの基準値に対する総合倍率')
+      : measured.length ? 'CPUの比較基準がありません' : '今回の結果には含まれていません';
     card.appendChild(el('p', { class: 'device-definition' }, definition));
-    card.appendChild(el('p', { class: 'device-path' }, best ? (best.label || best.target_id) : ''));
+    const target = (rep?.targets || []).find((t) => t.id === best?.target_id);
+    card.appendChild(el('p', { class: 'device-path' }, best ? (target?.detail || best.label || best.target_id) : '機器の有無・設定は詳細で確認できます'));
     card.appendChild(el('a', { class: 'text-link', href: measured.length ? '#performance' : '#devices' },
-      best ? `${best.workloads}項目の比較 · 詳細 →` : measured.length ? '測定値を見る →' : '機器・設定を確認 →'));
+      best ? `${best.workloads}項目の測定データを見る →` : measured.length ? '測定値を見る →' : '対応状況を見る →'));
     host.appendChild(card);
   }
   const total = (rep?.results || []).length;
   $('overviewCoverage').textContent = rep
-    ? `${rows.length}/${total}件成功 · 所要 ${fmtDuration(rep.duration_s)}。各機器の最高倍率を表示。比較項目数が同じ結果で比べてください。`
+    ? `${rows.length}/${total}件成功 · 所要 ${fmtDuration(rep.duration_s)}。CPUは基準値、GPU・NPUは最高倍率。同じテスト項目で比較してください。`
     : '機器ごとの倍率と、計測結果の注意点をここで確認できます。';
 }
 
@@ -436,7 +445,7 @@ function renderGrade(rep) {
   const g = rep.grade || {};
   const score = g.score ?? 0;
   const letter = g.letter || '?';
-  const colour = score >= 80 ? '#a3e635' : score >= 60 ? '#fbbf24' : '#fb7185';
+  const colour = score >= 80 ? '#15803d' : score >= 60 ? '#92520b' : '#b42318';
   const r = 36, circ = 2 * Math.PI * r;
   host.innerHTML = '';
   const badge = el('div', { class: 'grade-badge' });
@@ -806,7 +815,7 @@ function buildRunModal() {
   (cat.workloads || []).forEach((w) => {
     if (w.key.endsWith('_int8')) return;
     const on = defaults.includes(w.key);
-    const l = el('label', { class: on ? 'sel' : '', style: '--accent:#22d3ee' });
+    const l = el('label', { class: on ? 'sel' : '', style: '--accent:#2563eb' });
     l.innerHTML = `<input type="checkbox" value="${esc(w.key)}" ${on ? 'checked' : ''} /><span>${esc(w.key)}</span><span style="color:var(--dim);font-size:11px">${esc(w.category)}</span>`;
     l.querySelector('input').addEventListener('change', (e) => l.classList.toggle('sel', e.target.checked));
     l.title = w.blurb || '';
