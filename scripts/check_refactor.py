@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from fairbench import cli, worker_process
+from fairbench.backends.ort_backend import OrtBackend
 from fairbench.config import RunConfig
 from fairbench.devices import Target
 from fairbench.runner import _score, verify_targets
@@ -138,8 +139,19 @@ def check_battery_cli() -> None:
     print("Battery CLI checks passed: battery override, AC, desktop, unknown AC, default refusal.")
 
 
+def check_directml_options() -> None:
+    backend = OrtBackend()
+    for provider in ("CPUExecutionProvider", "DmlExecutionProvider"):
+        target = Target("check", "ort", provider, "cpu", "unknown", "check")
+        options = backend._session_options(target, RunConfig(threads=1))
+        assert options.enable_mem_pattern == (provider != "DmlExecutionProvider")
+        assert options.execution_mode == backend.ort.ExecutionMode.ORT_SEQUENTIAL
+    print("DirectML session options passed (no GPU required for this check).")
+
+
 if __name__ == "__main__":
     check_worker_failures()
     check_scores()
     check_cpu_worker()
     check_battery_cli()
+    check_directml_options()

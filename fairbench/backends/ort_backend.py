@@ -68,7 +68,8 @@ class OrtBackend(Backend):
         so = self.ort.SessionOptions()
         so.graph_optimization_level = self.ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         so.log_severity_level = 3
-        so.enable_mem_pattern = True
+        # DirectML requires memory-pattern optimisation to be disabled.
+        so.enable_mem_pattern = target.device != "DmlExecutionProvider"
         so.execution_mode = self.ort.ExecutionMode.ORT_SEQUENTIAL
 
         threads = cfg.resolve_threads()

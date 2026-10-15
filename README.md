@@ -111,12 +111,16 @@ pwsh -File scripts\build.ps1
 
 | artefact | for | notes |
 | --- | --- | --- |
-| `dist/fairbench-<ver>-win64.zip` | machines **without** Python | frozen onedir build, ~38 MB zipped |
+| `dist/fairbench-<ver>-win64.zip` | machines **without** Python | portable CPU + DirectML GPU build |
 | `dist/fairbench-<ver>-py3-none-any.whl` | machines **with** Python | `uv tool install`, then add extras normally |
 
 The **zip** is the right choice for handing the benchmark to a reviewer who
-should not have to install anything: unzip, run `fairbench.exe selftest`, then
-`fairbench.exe run`. OpenVINO is excluded from the frozen build (it is about a
+should not have to install Python, uv, CUDA or OpenVINO: unzip the entire folder
+and double-click `start-fairbench.cmd` to open the dashboard. CPU and DirectML
+GPU inference are bundled. GPU acceleration requires a DirectX 12 device and
+its Windows graphics driver; it does not require a separate GPU environment.
+`fairbench.exe selftest` checks the bundle from a terminal.
+OpenVINO is excluded from the frozen build (it is about a
 gigabyte of device plugins and is optional), so an Intel NPU number needs the
 wheel instead — or an OpenVINO interpreter alongside the executable, which the
 interpreter registry finds on its own.
@@ -130,17 +134,24 @@ Things worth knowing about the frozen build:
 * Each measurement cell runs in a **fresh child process**, and in a packaged app
   that child is `fairbench.exe --worker …` rather than `python -m fairbench.worker`.
   The hidden flag exists for exactly this.
-* The `fairbench` source ships under `src/` next to the executable. That is what
-  lets a GPU runtime living in *another* interpreter (`.venv-gpu`) be benchmarked
-  from the packaged build without any Python on the machine.
-* `setup-gpu.cmd` is included, so adding a DirectML runtime with no Python at all
-  is a double-click.
+* The `fairbench` source ships under `src/` for optional external runtimes.
+  An external runtime needs its own working Python interpreter; CPU and
+  DirectML GPU measurements use the bundled executable instead.
+* The build uses `.venv-build` with only the DirectML ORT wheel on Windows,
+  avoiding collisions with the CPU-only wheel in the development environment.
 * `selftest` exists because a packaged build is hard to debug: it builds every
   workload, probes every device, spawns a real child process and checks the
   dashboard assets, then says precisely what is missing. It caught a real bug
   during development — ONNX Runtime's quantiser does bare top-level imports
   (`from fusion_utils import …`), which PyInstaller cannot resolve, so every
   INT8 workload was silently missing from the packaged build.
+
+The portable build includes Python, NumPy, ONNX and ONNX Runtime internally.
+These are still dependencies, but users do not install them separately. The
+dashboard uses the standard browser and has no external JavaScript libraries
+or online assets. Vendor NPU runtimes and drivers remain optional; their
+availability cannot be assumed on a default Windows installation. Testing on
+a development PC does not certify operation on a clean Windows installation.
 
 ## Workloads
 

@@ -9,9 +9,12 @@ Design choices, and why:
   is the last thing this tool should do. onedir also keeps the native ONNX
   Runtime DLLs in a stable location, which several Execution Providers require.
 * **OpenVINO is excluded.** It is roughly a gigabyte of device plugins and it is
-  optional; the build stays around 60 MB without it. Users who need an Intel NPU
+  optional. Users who need an Intel NPU
   run the packaged build with an OpenVINO interpreter next to it - the
   interpreter registry finds it automatically.
+* **DirectML is bundled on Windows.** The isolated build environment contains
+  one ORT wheel, with CPU and DirectX 12 GPU providers. Its native DLLs are
+  collected below; CUDA and a separate GPU Python environment are unnecessary.
 * **The source ships under ``src/``.** ``onnxruntime``, ``onnxruntime-directml``
   and ``onnxruntime-gpu`` all install into the same package, so at most one can
   be active per interpreter. Devices in another interpreter need the worker code,
@@ -44,6 +47,8 @@ binaries = collect_dynamic_libs("onnxruntime")
 hiddenimports = [
     "onnxruntime.capi._pybind_state",
     "onnxruntime.quantization",
+    # ORT 1.24's data-file transformer helpers import this by its bare name.
+    "symbolic_shape_infer",
     *collect_submodules("onnxruntime.quantization"),
     "onnx",
     "onnx.helper",
@@ -75,7 +80,7 @@ excludes = [
 
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
-    pathex=[str(ROOT)],
+    pathex=[str(ROOT), str(_ORT_DIR / "tools")],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

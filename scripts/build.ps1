@@ -69,8 +69,22 @@ if (-not $SkipWheel) {
 
 if (-not $SkipFrozen) {
     Write-Host "[3/5] freezing the executable" -ForegroundColor Cyan
-    uv run --no-sync pyinstaller --noconfirm --clean --distpath dist --workpath build packaging\fairbench.spec
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # Keep mutually exclusive ORT wheels out of the same environment. The
+    # Windows bundle uses DirectML, which includes both CPU and GPU providers.
+    $previousBuildEnvironment = $env:UV_PROJECT_ENVIRONMENT
+    try {
+        $env:UV_PROJECT_ENVIRONMENT = Join-Path $root '.venv-build'
+        $syncArgs = @('sync', '--locked', '--no-install-project')
+        if ($platform -eq 'win64') {
+            $syncArgs += @('--extra', 'directml', '--no-install-package', 'onnxruntime')
+        }
+        uv @syncArgs
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        uv run --no-sync pyinstaller --noconfirm --clean --distpath dist --workpath build packaging\fairbench.spec
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } finally {
+        $env:UV_PROJECT_ENVIRONMENT = $previousBuildEnvironment
+    }
 
     # Ship what the frozen build cannot bake in: the worker source, so a GPU
     # runtime living in another interpreter can be used, plus the docs.
@@ -85,19 +99,14 @@ if (-not $SkipFrozen) {
     Copy-Item -Force "docs\METHODOLOGY.md" "$app\METHODOLOGY.md"
     Copy-Item -Force "pyproject.toml" "$app\pyproject.toml"
 
-    # A double-clickable way to add a GPU runtime on a machine with no Python.
-    # It cd's to its own directory so the virtual environment lands next to the
-    # executable, where the interpreter registry will find it.
+    # Start the dashboard without requiring Python, uv, or a terminal command.
     $cmd = @(
         "@echo off",
         "cd /d `"%~dp0`"",
-        "REM Creates .venv-gpu with onnxruntime-directml (no CUDA install needed),",
-        "REM then rescans this machine for AI devices.",
-        '"%~dp0fairbench.exe" setup-gpu %*',
-        '"%~dp0fairbench.exe" devices',
-        "pause"
+        '"%~dp0fairbench.exe" serve %*',
+        "if errorlevel 1 pause"
     ) -join "`r`n"
-    Set-Content -Encoding ASCII -Path "$app\setup-gpu.cmd" -Value $cmd
+    Set-Content -Encoding ASCII -Path "$app\start-fairbench.cmd" -Value $cmd
 
     if (-not $NoZip) {
         $zip = "dist\fairbench-$version-$platform.zip"
