@@ -5,7 +5,7 @@ onnxruntime>=1.18
 
 # Optional backends / devices ------------------------------------------------
 # Intel CPU + iGPU + NPU (Core Ultra). Needed for any NPU number on Intel.
-openvino>=2024.4
+# pip install '.[openvino]'
 
 # NVIDIA GPU via ONNX Runtime
 # onnxruntime-gpu
