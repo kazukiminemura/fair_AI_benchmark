@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fairbench"
+version = "0.1.0"
+description = "Vendor-neutral AI benchmark for laptop CPU / GPU / NPU (Intel vs AMD)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "fairbench" }]
+keywords = ["benchmark", "ai", "npu", "onnxruntime", "openvino", "intel", "amd", "laptop"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Benchmark",
+]
+
+# Core: portable, works on any x86-64 or ARM64 machine, CPU only.
+dependencies = [
+    "numpy>=1.26",
+    "onnx>=1.16",
+    "onnxruntime>=1.18",
+]
+
+[project.optional-dependencies]
+# Intel CPU / iGPU / NPU through OpenVINO, including the NPU plugin.
+# Required for any Intel NPU number.
+openvino = ["openvino>=2024.4"]
+# Any DirectX 12 GPU on Windows (NVIDIA, AMD, Intel) with no CUDA install.
+# NOTE: every ONNX Runtime wheel installs into the same `onnxruntime` package,
+# so pick one per environment. fairbench will use a wheel that lives in another
+# interpreter - see `fairbench setup-gpu` and the FAIRBENCH_PYTHON variable.
+directml = ["onnxruntime-directml"]
+cuda = ["onnxruntime-gpu", "nvidia-cublas-cu12", "nvidia-cudnn-cu12"]
+qnn = ["onnxruntime-qnn"]
+# AMD Ryzen AI (XDNA) is deliberately NOT an extra: `onnxruntime-vitisai` is not
+# published on PyPI, it ships with AMD's Ryzen AI software. Install it into its
+# own virtual environment per AMD's instructions and point FAIRBENCH_PYTHON at
+# that environment - the interpreter registry will pick the NPU up.
+
+[project.scripts]
+fairbench = "fairbench.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/example/fairbench"
+Issues = "https://github.com/example/fairbench/issues"
+
+# --------------------------------------------------------------------------
+# Development / packaging. PEP 735 groups, understood by uv and pip 25+.
+# --------------------------------------------------------------------------
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.10",
+    "ruff>=0.6",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+# The packaged build must not drag in OpenVINO: it is ~1 GB of device plugins
+# and it is optional at runtime, so it stays an extra.
+#   uv sync                     -> core only  (CPU, plus any external GPU venv)
+#   uv sync --extra openvino    -> adds the Intel CPU/GPU/NPU plugin
+
+# --------------------------------------------------------------------------
+[tool.setuptools.packages.find]
+include = ["fairbench*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+fairbench = ["web/*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
