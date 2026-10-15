@@ -19,22 +19,16 @@ Order of operations, and why:
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import sys
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
-from . import __version__, models, paths, system
+from . import __version__, models, system
 from .config import RunConfig
 from .devices import Discovery, Target, discover
 from .power import probe_power_sources as power_probe
 from .stats import geometric_mean, median, summarise_repeats
-
-JOB_DIR = Path(".cache") / "jobs"
+from .worker_process import spawn_worker
 
 ProgressFn = Callable[[dict[str, Any]], None]
 
@@ -90,122 +84,6 @@ def precision_of(workload: str) -> str:
 
 
 # --------------------------------------------------------------------------
-# child process plumbing
-# --------------------------------------------------------------------------
-def _worker_env() -> dict[str, str]:
-    env = os.environ.copy()
-    root = str(paths.project_root())
-    existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = root + (os.pathsep + existing if existing else "")
-    env["PYTHONUTF8"] = "1"
-    env["PYTHONIOENCODING"] = "utf-8"
-    return env
-
-
-def _worker_command(python: str, job_path: Path, out_path: Path) -> list[str]:
-    """How to launch a measurement cell.
-
-    In a packaged build the "interpreter" is the executable itself, so the
-    module entry point is replaced by a hidden ``--worker`` flag. A device that
-    lives in a *real* external interpreter (a DirectML venv) still uses
-    ``-m fairbench.worker``, which is why the packaged build ships the source.
-    """
-    if paths.is_own_interpreter(python) and paths.FROZEN:
-        return [python, "--worker", str(job_path), str(out_path)]
-    return [python, "-X", "faulthandler", "-m", "fairbench.worker", str(job_path), str(out_path)]
-
-
-def _spawn_worker(job: dict[str, Any], timeout: float, tag: str) -> dict[str, Any]:
-    JOB_DIR.mkdir(parents=True, exist_ok=True)
-    # Absolute paths: the child may run with a different working directory.
-    job_path = (JOB_DIR / f"{tag}.job.json").resolve()
-    out_path = (JOB_DIR / f"{tag}.out.json").resolve()
-    job_path.write_text(json.dumps(job))
-    if out_path.exists():
-        out_path.unlink()
-
-    python = job.get("target", {}).get("python") or sys.executable
-    if paths.FROZEN and not paths.is_own_interpreter(python) and not paths.worker_module_available():
-        return {
-            "ok": False,
-            "target_id": job["target"]["id"],
-            "workload": job["workload"],
-            "error": (
-                f"this device needs the external interpreter {python}, but the packaged build "
-                "cannot find the fairbench worker source next to the executable"
-            ),
-            "phase": "spawn",
-        }
-    cmd = _worker_command(python, job_path, out_path)
-    started = time.perf_counter()
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(Path.cwd()),
-            env=_worker_env(),
-            capture_output=True,
-            timeout=timeout,
-        )
-        stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
-        returncode = proc.returncode
-    except FileNotFoundError:
-        return {
-            "ok": False,
-            "target_id": job["target"]["id"],
-            "workload": job["workload"],
-            "error": f"interpreter for this device is missing: {python}",
-            "phase": "spawn",
-        }
-    except subprocess.TimeoutExpired:
-        return {
-            "ok": False,
-            "target_id": job["target"]["id"],
-            "workload": job["workload"],
-            "error": f"device did not respond within {timeout:.0f}s (hung or extremely slow)",
-            "phase": "timeout",
-            "elapsed_s": time.perf_counter() - started,
-        }
-
-    if out_path.exists():
-        try:
-            result = json.loads(out_path.read_text())
-            result.setdefault("worker_returncode", returncode)
-            if not result.get("ok") and not result.get("error"):
-                result["error"] = _crash_hint(returncode, stderr)
-            return result
-        except Exception as exc:
-            return {
-                "ok": False,
-                "target_id": job["target"]["id"],
-                "workload": job["workload"],
-                "error": f"could not parse worker output: {exc}",
-                "phase": "parse",
-            }
-    return {
-        "ok": False,
-        "target_id": job["target"]["id"],
-        "workload": job["workload"],
-        "error": _crash_hint(returncode, stderr),
-        "phase": "crash",
-        "elapsed_s": time.perf_counter() - started,
-    }
-
-
-def _crash_hint(returncode: int | None, stderr: str) -> str:
-    if returncode is not None and returncode < 0:
-        codes = {
-            -1073741819: "access violation (0xC0000005)",
-            -1073740791: "stack buffer overrun / abort (0xC0000409)",
-            -1073741571: "stack overflow (0xC00000FD)",
-        }
-        base = f"device driver aborted the process: {codes.get(returncode, hex(returncode & 0xFFFFFFFF))}"
-    else:
-        base = f"worker exited with code {returncode}"
-    tail = "\n".join(line for line in stderr.strip().splitlines()[-4:] if line.strip())
-    return f"{base}\n{tail}" if tail else base
-
-
-# --------------------------------------------------------------------------
 # target verification
 # --------------------------------------------------------------------------
 def verify_targets(targets: list[Target], cfg: RunConfig, progress: ProgressFn | None = None) -> dict[str, dict]:
@@ -232,7 +110,7 @@ def verify_targets(targets: list[Target], cfg: RunConfig, progress: ProgressFn |
             "repeat_index": 0,
             "power_sources": [],
         }
-        result = _spawn_worker(job, timeout=180.0, tag=f"verify-{_slug(target.id)}")
+        result = spawn_worker(job, timeout=180.0, tag=f"verify-{_slug(target.id)}")
         verdicts[target.id] = {
             "ok": bool(result.get("ok")),
             "error": result.get("error"),
@@ -386,7 +264,7 @@ def run_suite(
         }
         tag = f"{_slug(target.id)}--{workload}--r{repeat}"
         timeout = cfg.max_seconds + 420.0
-        result = _spawn_worker(job, timeout=timeout, tag=tag)
+        result = spawn_worker(job, timeout=timeout, tag=tag)
         result["repeat_index"] = repeat
         result["precision"] = precision
         report["cells"].append(result)
@@ -511,6 +389,27 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------
 # scoring
 # --------------------------------------------------------------------------
+def _rank_targets(
+    rows: list[dict[str, Any]], values: dict[str, list[float]], metric: str
+) -> list[dict[str, Any]]:
+    """Rank each target by the geometric mean of its measured values."""
+    samples: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        samples.setdefault(row["target_id"], row)
+    ranking = [
+        {
+            "target_id": target_id,
+            "label": samples[target_id].get("target_label"),
+            "vendor": samples[target_id].get("vendor"),
+            "kind": samples[target_id].get("kind"),
+            metric: geometric_mean(measurements),
+            "workloads": len(measurements),
+        }
+        for target_id, measurements in values.items()
+    ]
+    return sorted(ranking, key=lambda row: -(row[metric] or 0))
+
+
 def _score(report: dict[str, Any]) -> dict[str, Any]:
     """Normalise each workload against this machine's own CPU baseline.
 
@@ -529,47 +428,18 @@ def _score(report: dict[str, Any]) -> dict[str, Any]:
     if not baseline:
         return {"baseline": None, "note": "no CPU baseline was measured; relative index unavailable"}
 
-    per_target: dict[str, list[tuple[str, float]]] = {}
-    for row in rows:
-        base = baseline.get(row["workload"])
-        if not base or not row.get("units_per_s"):
-            continue
-        per_target.setdefault(row["target_id"], []).append((row["workload"], row["units_per_s"] / base))
-
-    index: list[dict[str, Any]] = []
-    for target_id, pairs in per_target.items():
-        sample = next(r for r in rows if r["target_id"] == target_id)
-        index.append(
-            {
-                "target_id": target_id,
-                "label": sample.get("target_label"),
-                "vendor": sample.get("vendor"),
-                "kind": sample.get("kind"),
-                "ai_index": geometric_mean([v for _, v in pairs]),
-                "workloads": len(pairs),
-            }
-        )
-    index.sort(key=lambda r: -(r["ai_index"] or 0))
-
-    efficiency: list[dict[str, Any]] = []
-    cpu_ai = next((i["ai_index"] for i in index if i["kind"] == "cpu"), None)
+    per_target: dict[str, list[float]] = {}
     per_target_w: dict[str, list[float]] = {}
     for row in rows:
+        base = baseline.get(row["workload"])
+        if base and row.get("units_per_s"):
+            per_target.setdefault(row["target_id"], []).append(row["units_per_s"] / base)
         if row.get("units_per_joule"):
             per_target_w.setdefault(row["target_id"], []).append(row["units_per_joule"])
-    for target_id, values in per_target_w.items():
-        sample = next(r for r in rows if r["target_id"] == target_id)
-        efficiency.append(
-            {
-                "target_id": target_id,
-                "label": sample.get("target_label"),
-                "vendor": sample.get("vendor"),
-                "kind": sample.get("kind"),
-                "units_per_joule": geometric_mean(values),
-                "workloads": len(values),
-            }
-        )
-    efficiency.sort(key=lambda r: -(r["units_per_joule"] or 0))
+
+    index = _rank_targets(rows, per_target, "ai_index")
+    efficiency = _rank_targets(rows, per_target_w, "units_per_joule")
+    cpu_ai = next((i["ai_index"] for i in index if i["kind"] == "cpu"), None)
 
     return {
         "baseline": {

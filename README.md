@@ -235,6 +235,7 @@ fairbench/
   devices.py       the six-cell matrix and concrete runnable targets
   backends/        ort_backend.py, openvino_backend.py + the Backend interface
   worker.py        one measurement cell, executed in its own process
+  worker_process.py isolated worker launch, timeouts and crash reporting
   runner.py        scheduling, aggregation, scoring, grading
   power.py         power/energy and host-CPU-cost sampling
   stats.py         median-first aggregation, trimmed CV, outlier fences
@@ -250,6 +251,12 @@ scripts/build.ps1              wheel + frozen bundle
 scripts/run-suite.ps1          pre-flight checks, then a suite
 results/                       one self-describing JSON per run
 ```
+
+## Verification
+
+Run `python -m scripts.check_refactor` to check worker failure handling, scoring,
+and a real isolated CPU inference. Run `python -m ruff check fairbench scripts/check_refactor.py`
+for static checks.
 
 ## Adding a workload
 

@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Isolated runtime environments created by `fairbench setup-gpu`
+.venv-*/
+
+# Benchmark artifacts
+.cache*/
+results/*.json
+!results/*.json.sample
+
+# uv / build outputs
+.venv/
+build/
+dist/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
