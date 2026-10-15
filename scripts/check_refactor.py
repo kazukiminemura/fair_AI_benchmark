@@ -6,14 +6,17 @@ import json
 import math
 import subprocess
 import sys
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from fairbench import worker_process
+from fairbench import cli, worker_process
 from fairbench.config import RunConfig
 from fairbench.devices import Target
 from fairbench.runner import _score, verify_targets
+from fairbench.system import PowerInfo, SystemFingerprint
 
 
 def check_worker_failures() -> None:
@@ -106,7 +109,37 @@ def check_cpu_worker() -> None:
     print(f"CPU child process passed ({Path(sys.executable).name}).")
 
 
+def check_battery_cli() -> None:
+    for present, on_ac, allow, expected_code, label in (
+        (True, False, True, 0, "battery"),
+        (True, False, False, 2, "battery"),
+        (True, True, False, 0, "AC"),
+        (False, False, False, 0, "desktop"),
+        (True, None, True, 0, "battery"),
+    ):
+        fingerprint = SystemFingerprint(power=PowerInfo(
+            battery_present=present, on_ac=on_ac, power_plan="Balanced"
+        ))
+        arguments = ["run", "--no-open"]
+        if allow:
+            arguments.append("--allow-battery")
+        output = StringIO()
+        with (
+            patch.object(cli.system, "collect", return_value=fingerprint),
+            patch.object(cli, "run_suite", return_value={"results": []}) as run,
+            patch.object(cli.report_mod, "save", return_value=Path("check.json")) as save,
+            redirect_stdout(output),
+        ):
+            assert cli.main(arguments) == expected_code
+        assert f"({label})" in output.getvalue()
+        assert run.call_count == save.call_count == (1 if expected_code == 0 else 0)
+        if run.called:
+            assert run.call_args.args[0].allow_battery == allow
+    print("Battery CLI checks passed: battery override, AC, desktop, unknown AC, default refusal.")
+
+
 if __name__ == "__main__":
     check_worker_failures()
     check_scores()
     check_cpu_worker()
+    check_battery_cli()
