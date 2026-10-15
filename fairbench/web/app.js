@@ -112,19 +112,22 @@ async function loadState() {
     return;
   }
   state.failures = 0;
+  const firstCatalog = !state.catalog;
+  const wasActive = state.run?.active;
   state.catalog = data.catalog;
   state.results = data.results || [];
   state.run = data.run;
   renderStatic();
   renderRunList();
   renderLive();
+  if (firstCatalog || wasActive !== state.run?.active) renderOverview();
 
   const runFile = state.run && state.run.result_file;
   const newest = state.results[0] && state.results[0].file;
 
   if (!state.activeFile) {
     // First paint: show what the last run produced, or the newest file.
-    const first = runFile || newest;
+    const first = new URLSearchParams(location.search).get('run') || runFile || newest;
     if (first) await openResult(first);
   } else if (state.followRun && state.run && !state.run.active && runFile) {
     // A run we started ourselves just finished - show its report once, then
@@ -143,8 +146,12 @@ function schedule(ms) {
 async function openResult(file) {
   try {
     const res = await fetch('/api/result/' + encodeURIComponent(file));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     state.report = await res.json();
     state.activeFile = file;
+    const url = new URL(location.href);
+    url.searchParams.set('run', file);
+    history.replaceState(null, '', url);
   } catch (err) { toast('could not load ' + file, true); return; }
   renderRunList();
   renderAll();
@@ -255,7 +262,7 @@ function renderRunList() {
       </div>
       <div class="r-sub"><span>${esc((r.device || '').slice(0, 38))}</span></div>
       <div class="r-sub"><span>${r.targets || 0} cells</span><span>${fmtDuration(r.duration_s)}</span><span>${ago(r.saved_at)}</span></div>`;
-    btn.onclick = () => { state.hideLive = true; state.followRun = false; openResult(r.file); };
+    btn.onclick = () => { state.hideLive = true; state.followRun = false; openResult(r.file); location.hash = 'overview'; };
     list.appendChild(btn);
   });
 }
@@ -271,6 +278,73 @@ function renderAll() {
   renderTable(rep);
   renderProvenance(rep);
   renderMatrix();
+  renderOverview();
+}
+
+/* Keep the overview focused on indices, coverage and validity. */
+function renderOverview() {
+  const rep = state.report;
+  const sys = (rep || state.catalog || {}).system || {};
+  $('overviewMachine').textContent = (sys.cpu || {}).name || 'このPC';
+  $('overviewDate').textContent = rep
+    ? new Date(rep.started_at * 1000).toLocaleString('ja-JP') + ' の計測 · 履歴 →'
+    : '過去の結果を見る →';
+  const checks = rep?.grade?.checks || [];
+  const failed = checks.filter((c) => c.status === 'fail').length;
+  const warned = checks.filter((c) => c.status === 'warn').length;
+  const status = $('overviewStatus');
+  status.className = 'overview-status ' + (failed ? 'needs-check' : warned ? 'caution' : '');
+  status.replaceChildren();
+  const verdict = state.run?.active ? (rep ? '計測中 · 前回の結果を表示' : '計測中')
+    : !rep ? 'まだ計測結果がありません' : failed ? '結果は要確認' : warned ? '注意点のある結果' : '計測完了';
+  status.appendChild(el('strong', {}, verdict));
+  status.appendChild(el('span', {}, !rep ? '右上の「計測を始める」から開始できます。'
+    : `信頼性 ${rep.grade?.letter || '—'} · 要確認 ${failed}件 / 注意 ${warned}件`));
+  if (rep) status.appendChild(el('a', { href: '#environment' }, '理由を見る →'));
+
+  const rows = (rep?.results || []).filter((r) => r.ok);
+  const indices = (rep?.scores?.ai_index || []).filter((r) => Number.isFinite(r.ai_index) && r.ai_index > 0);
+  const host = $('overviewDevices');
+  host.replaceChildren();
+  for (const [kind, name] of [['cpu', 'CPU'], ['gpu', 'GPU'], ['npu', 'NPU']]) {
+    const measured = rows.filter((r) => r.kind === kind);
+    const best = indices.filter((r) => r.kind === kind).sort((a, b) => b.ai_index - a.ai_index)[0];
+    const baselineId = rep?.scores?.baseline?.target_id;
+    const card = el('article', { class: 'device-card', style: `--accent:${KIND_COLOR[kind]}` });
+    const title = el('div', { class: 'device-card-heading' });
+    title.append(el('h3', {}, name), el('span', {}, measured.length ? '計測済み' : '未計測'));
+    card.appendChild(title);
+    card.appendChild(el('div', { class: 'device-index' }, best ? `${fmt(best.ai_index)}×` : measured.length ? '比較なし' : '—'));
+    const definition = best ? (best.target_id === baselineId ? 'CPUの基準値' : 'CPUを1とした処理速度')
+      : measured.length ? 'CPUの比較基準がありません' : 'この結果には計測データがありません';
+    card.appendChild(el('p', { class: 'device-definition' }, definition));
+    card.appendChild(el('p', { class: 'device-path' }, best ? (best.label || best.target_id) : ''));
+    card.appendChild(el('a', { class: 'text-link', href: measured.length ? '#performance' : '#devices' },
+      best ? `${best.workloads}項目の比較 · 詳細 →` : measured.length ? '測定値を見る →' : '機器・設定を確認 →'));
+    host.appendChild(card);
+  }
+  const total = (rep?.results || []).length;
+  $('overviewCoverage').textContent = rep
+    ? `${rows.length}/${total}件成功 · 所要 ${fmtDuration(rep.duration_s)}。各機器の最高倍率を表示。比較項目数が同じ結果で比べてください。`
+    : '機器ごとの倍率と、計測結果の注意点をここで確認できます。';
+}
+
+const VIEWS = {
+  overview: '概要', performance: '測定データ', devices: '機器情報',
+  environment: '信頼性・計測条件', history: '実行履歴', method: '計測方法', activity: '実行ログ',
+};
+function renderRoute() {
+  const requested = location.hash.slice(1);
+  const view = Object.hasOwn(VIEWS, requested) ? requested : 'overview';
+  document.querySelectorAll('[data-view]').forEach((node) => {
+    node.hidden = !node.dataset.view.split(' ').includes(view);
+  });
+  document.querySelectorAll('.view-nav a').forEach((link) => {
+    if (link.hash === '#' + view) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+  $('viewTitle').textContent = VIEWS[view];
+  document.title = `fairbench · ${VIEWS[view]}`;
 }
 
 function renderHero(rep) {
@@ -660,6 +734,7 @@ function renderProvenance(rep) {
 /* --------------------------------------------------------------- live run */
 function renderLive() {
   const run = state.run;
+  document.body.classList.toggle('running', !!run?.active);
   const panel = $('livePanel');
   // Keep the log on screen after the run ends so it can actually be read; it is
   // dismissed when a new run starts or the user opens a different result.
@@ -668,7 +743,7 @@ function renderLive() {
   panel.classList.toggle('done', !run.active);
 
   const head = panel.querySelector('h2');
-  if (head) head.textContent = run.active ? 'run in progress' : 'run finished';
+  if (head) head.textContent = run.active ? '計測中' : '計測終了';
   const stop = $('stopBtn');
   if (stop) stop.hidden = !run.active;
 
@@ -795,4 +870,10 @@ $('stopBtn').onclick = async () => {
 $('runModal').addEventListener('click', (e) => { if (e.target.id === 'runModal') $('runModal').hidden = true; });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('runModal').hidden = true; });
 
+window.addEventListener('hashchange', () => {
+  renderRoute();
+  window.scrollTo(0, 0);
+});
+renderRoute();
+renderOverview();
 loadState();
