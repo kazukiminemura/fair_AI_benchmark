@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>fairbench · AI benchmark for CPU / GPU / NPU</title>
+<link rel="stylesheet" href="/style.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0e18'/%3E%3Cpath d='M8 22V10l8 6 8-6v12' stroke='%2322d3ee' stroke-width='3' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E" />
+</head>
+<body>
+<div class="aurora" aria-hidden="true">
+  <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span>
+  <div class="grid-overlay"></div>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" class="logo" aria-hidden="true">
+      <path d="M6 24V8l10 7.5L26 8v16" fill="none" stroke="url(#lg)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="6" cy="24" r="2.4" fill="#22d3ee"/><circle cx="26" cy="24" r="2.4" fill="#d946ef"/>
+      <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#d946ef"/>
+      </linearGradient></defs>
+    </svg>
+    <div class="brand-text">
+      <h1>fairbench</h1>
+      <p>identical work · identical measurement · Intel vs AMD</p>
+    </div>
+  </div>
+  <div class="host-chips" id="hostChips"></div>
+  <div class="topbar-actions">
+    <button class="btn ghost" id="refreshBtn" title="Re-read this machine and its runtimes">refresh</button>
+    <button class="btn primary" id="newRunBtn">new run</button>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="sidebar">
+    <section class="panel">
+      <h2 class="panel-title">runs <span class="count" id="runCount">0</span></h2>
+      <div class="run-list" id="runList"></div>
+    </section>
+
+    <section class="panel methodology-panel">
+      <h2 class="panel-title">how this stays fair</h2>
+      <ol class="method-list" id="methodList"></ol>
+    </section>
+  </aside>
+
+  <div class="content">
+    <section class="hero" id="hero">
+      <div class="hero-main">
+        <div class="hero-eyebrow" id="heroEyebrow">no data</div>
+        <h2 class="hero-title" id="heroTitle">waiting for a run</h2>
+        <div class="hero-meta" id="heroMeta"></div>
+      </div>
+      <div class="hero-stats" id="heroStats"></div>
+    </section>
+
+    <section class="live panel" id="livePanel" hidden>
+      <div class="live-head">
+        <span class="pulse"></span>
+        <h2>run in progress</h2>
+        <span class="live-elapsed" id="liveElapsed"></span>
+        <button class="btn ghost small" id="stopBtn">stop</button>
+      </div>
+      <div class="progress"><div class="progress-fill" id="progressFill"></div><span id="progressText"></span></div>
+      <div class="live-log" id="liveLog"></div>
+    </section>
+
+    <section class="section" id="matrixSection">
+      <h2 class="section-title"><span>device matrix</span><em>what this machine can actually run, per silicon</em></h2>
+      <div class="matrix" id="matrix"></div>
+      <div class="matrix-notes" id="matrixNotes"></div>
+    </section>
+
+    <div class="columns">
+      <section class="section panel chart-panel">
+        <h2 class="section-title"><span>AI index</span><em>geometric mean speed-up vs this machine's CPU</em></h2>
+        <div class="chart" id="indexChart"><p class="empty">run the suite to populate this chart</p></div>
+      </section>
+      <section class="section panel grade-panel">
+        <h2 class="section-title"><span>environment grade</span><em>can these numbers be trusted?</em></h2>
+        <div class="grade" id="grade"></div>
+      </section>
+    </div>
+
+    <section class="section panel chart-panel">
+      <h2 class="section-title"><span>throughput by workload</span><em>bar length is relative to the fastest device in that workload; the number is absolute</em></h2>
+      <div class="legend" id="chartLegend"></div>
+      <div class="chart" id="throughputChart"><p class="empty">run the suite to populate this chart</p></div>
+    </section>
+
+    <section class="section panel chart-panel">
+      <h2 class="section-title"><span>profile</span><em>where each device wins: acceleration index by workload family</em></h2>
+      <div class="chart radar-wrap" id="radarChart"><p class="empty">run the suite to populate this chart</p></div>
+    </section>
+
+    <section class="section panel">
+      <h2 class="section-title"><span>every measurement</span><em>raw, per device, per workload</em></h2>
+      <div class="table-wrap"><table class="data-table" id="resultTable"></table></div>
+    </section>
+
+    <section class="section panel provenance">
+      <h2 class="section-title"><span>provenance</span><em>enough to reproduce or to refute this run</em></h2>
+      <div class="provenance-grid" id="provenance"></div>
+    </section>
+  </div>
+</main>
+
+<div class="modal-backdrop" id="runModal" hidden>
+  <div class="modal">
+    <h2>start a run</h2>
+    <p class="modal-sub">Targets are verified with a 1 ms probe in an isolated process before the suite commits to them.</p>
+    <div class="field">
+      <label>devices</label>
+      <div class="checks" id="targetChecks"></div>
+    </div>
+    <div class="field">
+      <label>workloads</label>
+      <div class="checks" id="workloadChecks"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>repeats</label><input type="number" id="optRepeats" min="1" max="10" value="3" /></div>
+      <div class="field"><label>seconds / cell</label><input type="number" id="optSeconds" min="1" max="120" value="4" /></div>
+      <div class="field"><label>cpu threads</label><input type="number" id="optThreads" min="1" max="128" placeholder="physical cores" /></div>
+    </div>
+    <div class="field toggles">
+      <label class="toggle"><input type="checkbox" id="optInt8" checked /><span>INT8 variants</span></label>
+      <label class="toggle"><input type="checkbox" id="optCheck" checked /><span>verify outputs vs CPU reference</span></label>
+      <label class="toggle"><input type="checkbox" id="optPower" checked /><span>sample power / energy</span></label>
+      <label class="toggle"><input type="checkbox" id="optBattery" /><span>allow running on battery</span></label>
+      <label class="toggle"><input type="checkbox" id="optQuick" /><span>quick mode (1 repeat, low confidence)</span></label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="cancelRun">cancel</button>
+      <button class="btn primary" id="confirmRun">run benchmark</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
