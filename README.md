@@ -39,6 +39,24 @@ uv run fairbench run --mode throughput --full
 結果は`results/`にJSONで保存され、ダッシュボードで比較できます。
 `--quick`は動作確認、`--full`は本計測用です。
 
+## Windows MLでGPU・NPUを計測
+
+Windows 11 24H2（ビルド26100）以降では、Windows ML経由でも計測できます。
+
+```sh
+uv run fairbench setup-winml
+uv run fairbench verify --targets winml
+uv run fairbench run --targets winml --mode throughput --full
+```
+
+専用の`.venv-winml`を作成し、MicrosoftのWindows ML EPカタログから
+対応する認証済みプロバイダーを取得します。初回はネット接続が必要です。
+GPU・NPU・CPUを個別に検出し、ダッシュボードにも「Windows ML」として表示します。
+GPU・NPUはONNX RuntimeによるCPUへのフォールバックを禁止し、非対応モデルは失敗理由を表示します。
+この条件では、一部の演算だけCPUを必要とするモデルも計測不可になります。
+対応ドライバーとメーカー別プロバイダーの対応状況に依存します。
+詳細は[MicrosoftのEP対応表](https://learn.microsoft.com/windows/ai/new-windows-ml/supported-execution-providers)を参照してください。
+
 ## 自動セットアップの範囲
 
 `uv sync`はOS・CPUアーキテクチャに応じて依存関係を選びます。

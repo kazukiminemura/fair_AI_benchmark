@@ -40,7 +40,7 @@ SLOTS: list[Slot] = [
     Slot("intel:npu", "intel", "npu", "Intel NPU (AI Boost)", "OpenVINO NPU plugin (Core Ultra 100/200V/200H)"),
     Slot("amd:cpu", "amd", "cpu", "AMD CPU", "ONNX Runtime CPU EP / OpenVINO CPU plugin"),
     Slot("amd:gpu", "amd", "gpu", "AMD GPU (Radeon / iGPU)", "DirectML (Windows) / ROCm (Linux)"),
-    Slot("amd:npu", "amd", "npu", "AMD NPU (XDNA / Ryzen AI)", "Vitis AI EP (ONNX Runtime) / Ryzen AI SW"),
+    Slot("amd:npu", "amd", "npu", "AMD NPU (XDNA / Ryzen AI)", "Windows ML Vitis AI EP / Ryzen AI SW"),
 ]
 
 # Devices we can benchmark but that are not part of the Intel-vs-AMD comparison.
@@ -154,7 +154,10 @@ def _ort_targets(fp: system.SystemFingerprint) -> tuple[list[Target], str, list[
     primary = next((i for i in interpreters if i.primary), None)
     primary_version = primary.onnxruntime if primary else "?"
 
-    total_providers = sorted({p for i in interpreters if i.available for p in i.providers})
+    total_providers = sorted(
+        {p for i in interpreters if i.available for p in i.providers}
+        | {device["provider"] for i in interpreters for device in i.winml_devices}
+    )
 
     gpu_vendor = None
     for a in fp.adapters:
@@ -170,6 +173,25 @@ def _ort_targets(fp: system.SystemFingerprint) -> tuple[list[Target], str, list[
         if not info.available:
             if not info.primary:
                 notes.append(f"interpreter {info.path} could not be probed: {info.error}")
+            continue
+        notes.extend(info.winml_notes)
+        if info.winml_version:
+            for device in info.winml_devices:
+                kind = device["kind"]
+                if kind not in ("cpu", "gpu", "npu"):
+                    continue
+                vendor = {0x8086: "intel", 0x1002: "amd", 0x1022: "amd", 0x10DE: "nvidia", 0x17CB: "qualcomm"}.get(
+                    device["vendor_id"], system.classify_vendor(device["vendor"])
+                )
+                targets.append(Target(
+                    id=f"winml:{device['provider']}:{kind}:{device['key']}",
+                    backend="winml", device=device["provider"], kind=kind, vendor=vendor,
+                    label=f"Windows ML {device['provider'].removesuffix('ExecutionProvider')}"
+                          + ("" if device["provider"] == "CPUExecutionProvider" else f" {kind.upper()}"),
+                    detail=device["description"], runtime_version=info.onnxruntime or "?",
+                    python="" if info.primary else info.path,
+                    options={"winml_key": device["key"], "windowsml_version": info.winml_version},
+                ))
             continue
         for ep in info.providers:
             if ep in ("AzureExecutionProvider",):
@@ -360,6 +382,9 @@ def discover(fingerprint: system.SystemFingerprint | None = None, include_openvi
         from . import interp as _interp
 
         d.interpreters = [i.to_dict() for i in _interp.probe_all()]
+        for info in d.interpreters:
+            if info.get("winml_version"):
+                d.runtimes["windowsml"] = info["winml_version"]
     except Exception:
         d.interpreters = []
 

@@ -9,24 +9,6 @@ const NS = 'http://www.w3.org/2000/svg';
 const KIND_COLOR = { cpu: '#2563eb', gpu: '#15803d', npu: '#7c3aed' };
 const VENDOR_COLOR = { intel: '#4f9dff', amd: '#ff5a5f', nvidia: '#3f7a0a', qualcomm: '#7c3aed' };
 
-const DEVICE_COLORS = {
-  'intel:cpu:ort': '#2563eb',
-  'intel:cpu:openvino': '#0369a1',
-  'intel:gpu:ort': '#7c8cff',
-  'intel:gpu:openvino': '#4f9dff',
-  'intel:npu:ort': '#a21caf',
-  'intel:npu:openvino': '#9333ea',
-  'amd:cpu:ort': '#15803d',
-  'amd:cpu:openvino': '#4d7c0f',
-  'amd:gpu:ort': '#ff5a5f',
-  'amd:gpu:openvino': '#f97316',
-  'amd:npu:ort': '#fb923c',
-  'amd:npu:openvino': '#f59e0b',
-  'nvidia:gpu:ort': '#3f7a0a',
-  'nvidia:gpu:openvino': '#15803d',
-  'qualcomm:npu:ort': '#7c3aed',
-};
-
 const METHOD = [
   ['Identical work.', 'Every device runs byte-identical ONNX graphs generated from a fixed seed. Model hashes are printed below.'],
   ['Identical inputs.', 'One seeded tensor set per graph, shared by every device and every repeat.'],
@@ -84,9 +66,7 @@ function toggles(sel, on) { document.querySelectorAll(sel).forEach((n) => n.clas
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
 function deviceColor(row) {
-  const key = `${row.vendor}:${row.kind}:${row.backend}`;
-  if (DEVICE_COLORS[key]) return DEVICE_COLORS[key];
-  return KIND_COLOR[row.kind] || VENDOR_COLOR[row.vendor] || '#94a3b8';
+  return KIND_COLOR[row.kind] || '#94a3b8';
 }
 
 function toast(msg, bad = false) {
