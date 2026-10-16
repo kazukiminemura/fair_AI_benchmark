@@ -20,6 +20,52 @@ from fairbench.runner import _score, verify_targets
 from fairbench.system import PowerInfo, SystemFingerprint
 
 
+def check_backend_selection() -> None:
+    from fairbench.runner import select_targets
+
+    targets = [Target("ort-cpu", "ort", "CPUExecutionProvider", "cpu", "intel", "CPU"),
+               Target("ov-gpu", "openvino", "GPU", "gpu", "intel", "GPU"),
+               Target("wm-npu", "winml", "VitisAIExecutionProvider", "npu", "amd", "NPU")]
+    assert select_targets(targets) == targets
+    assert select_targets(targets, "winml") == [targets[2]]
+    assert select_targets(targets, "openvino", ["ov-gpu"]) == [targets[1]]
+    for pool, backend, selected in ((targets, "winml", ["ov-gpu"]), (targets[:1], "winml", None)):
+        try:
+            select_targets(pool, backend, selected)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("backend mismatch silently accepted")
+    args = cli.build_parser().parse_args(["run", "--backend", "winml", "--suite", "vision"])
+    cfg = cli._config_from_args(args)
+    assert cfg.backend == "winml" and cfg.suite == "vision"
+    assert cfg.to_dict()["backend"] == "winml"
+    print("Backend selection passed: runtime filter, target intersection, unavailable runtime, recorded CLI config.")
+
+
+def check_measurement_sets() -> None:
+    from fairbench.runner import DEFAULT_WORKLOADS, WORKLOAD_SETS, resolve_workloads
+
+    for key, suite in WORKLOAD_SETS.items():
+        assert resolve_workloads(RunConfig(suite=key, include_int8=False)) == suite["workloads"]
+    assert resolve_workloads(RunConfig(include_int8=False)) == DEFAULT_WORKLOADS
+    assert resolve_workloads(RunConfig(suite="compute")) == ["dense_gemm", "dense_gemm_int8"]
+    args = cli.build_parser().parse_args(["run", "--suite", "vision", "--no-int8"])
+    cfg = cli._config_from_args(args)
+    assert resolve_workloads(cfg) == ["conv_vision", "depthwise_mobile"]
+    args = cli.build_parser().parse_args(["run", "--suite", "vision", "--workloads", "transformer", "--no-int8"])
+    cfg = cli._config_from_args(args)
+    assert cfg.suite == "custom" and resolve_workloads(cfg, args.workloads) == ["transformer"]
+    for suite in ("missing", "custom"):
+        try:
+            resolve_workloads(RunConfig(suite=suite))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid/empty measurement set accepted")
+    print("Measurement sets passed: presets, default compatibility, INT8, CLI overrides, validation.")
+
+
 def check_compute_units() -> None:
     from fairbench.report import format_compute_rate
 
@@ -427,6 +473,8 @@ def check_directml_options() -> None:
 
 
 if __name__ == "__main__":
+    check_backend_selection()
+    check_measurement_sets()
     check_compute_units()
     check_windowsml_npu_requirement()
     check_windowsml_selection()

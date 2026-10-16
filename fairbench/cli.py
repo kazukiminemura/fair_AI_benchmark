@@ -13,7 +13,7 @@ from . import __version__, models, paths, system
 from . import report as report_mod
 from .config import RunConfig
 from .devices import EXTRA_SLOTS, SLOTS, discover
-from .runner import WORKLOAD_META, resolve_workloads, run_suite, verify_targets
+from .runner import WORKLOAD_META, WORKLOAD_SETS, resolve_workloads, run_suite, verify_targets
 
 # --------------------------------------------------------------------------
 # pretty printing
@@ -104,6 +104,8 @@ def cmd_workloads(args: argparse.Namespace) -> int:
 
 def _config_from_args(args: argparse.Namespace) -> RunConfig:
     cfg = RunConfig(
+        backend=args.backend,
+        suite="custom" if args.workloads else args.suite,
         mode=args.mode,
         requests=args.requests,
         warmup=args.warmup,
@@ -558,6 +560,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_ver.set_defaults(func=cmd_verify)
 
     p_run = sub.add_parser("run", help="run the benchmark suite")
+    p_run.add_argument("--backend", choices=["all", "ort", "openvino", "winml"], default="all", help="runtime to benchmark (default: all available)")
+    p_run.add_argument("--suite", choices=list(WORKLOAD_SETS), default="standard", help="measurement workload set; --workloads overrides it")
     p_run.add_argument("--mode", choices=["latency", "throughput"], default="latency")
     p_run.add_argument("--requests", type=int, choices=range(33), default=0, metavar="0..32", help="throughput concurrency; 0 sweeps 1, 2, 4, 8")
     p_run.add_argument("--targets", nargs="*", default=None, help="target ids from `fairbench devices`")

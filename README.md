@@ -22,6 +22,27 @@ uv run fairbench run --quick
 uv run fairbench run --full
 ```
 
+計測セットは画面の「計測セット」または`--suite`で選べます。
+
+```sh
+uv run fairbench run --suite vision --quick
+uv run fairbench run --suite compute --mode throughput --full
+```
+
+`standard`（全モデル）・`compute`（行列計算）・`vision`（画像処理）・
+`nlp`（Transformer）・`llm`（prefill/decode）から選択できます。
+INT8追加は従来どおりで、不要なら`--no-int8`を指定します。
+画面ではセット選択後に個別調整も可能です。CLIでは`--workloads`がセットより優先されます。
+
+バックエンドも画面から選択できます。CLIでは`--backend`を指定します。
+
+```sh
+uv run fairbench run --backend winml --suite vision --quick
+```
+
+`all`（既定）・`ort`（ONNX Runtime）・`openvino`・`winml`（Windows ML）を指定できます。
+画面には利用可能なバックエンドだけを表示します。機器を個別指定した場合は、その条件とバックエンドの両方で絞り込みます。
+
 最大スループットを測る場合：
 
 ```sh

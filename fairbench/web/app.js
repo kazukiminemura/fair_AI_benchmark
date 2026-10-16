@@ -695,6 +695,8 @@ function renderProvenance(rep) {
     ['min iterations', cfg.min_iterations],
     ['min seconds', cfg.min_seconds],
     ['max seconds', cfg.max_seconds],
+    ['backend', cfg.backend || 'all'],
+    ['measurement set', cfg.suite || 'standard'],
     ['mode', cfg.mode || 'latency'],
     ['parallel requests', cfg.mode === 'throughput' ? (cfg.requests || 'auto: 1/2/4/8') : 1],
     ['repeats', cfg.repeats],
@@ -792,15 +794,46 @@ function buildRunModal() {
   const tWrap = $('targetChecks');
   const wWrap = $('workloadChecks');
   if (tWrap.childElementCount) return;
+  const backendSelect = $('optBackend');
+  backendSelect.innerHTML = '';
+  backendSelect.appendChild(el('option', { value: 'all' }, 'すべてのバックエンド'));
+  const backendNames = { ort: 'ONNX Runtime', openvino: 'OpenVINO', winml: 'Windows ML' };
+  const availableBackends = new Set((cat.discovery?.targets || []).filter((t) => t.available !== false).map((t) => t.backend));
+  Object.entries(backendNames).forEach(([key, name]) => {
+    if (availableBackends.has(key)) backendSelect.appendChild(el('option', { value: key }, name));
+  });
+  backendSelect.addEventListener('change', () => {
+    tWrap.querySelectorAll('label').forEach((label) => {
+      const visible = backendSelect.value === 'all' || label.dataset.backend === backendSelect.value;
+      label.hidden = !visible;
+      label.querySelector('input').disabled = !visible;
+    });
+  });
   tWrap.innerHTML = '';
   ((cat.discovery || {}).targets || []).filter((t) => t.available !== false).forEach((t) => {
     const l = el('label', { class: 'sel', style: `--accent:${deviceColor(t)}` });
+    l.dataset.backend = t.backend;
     l.innerHTML = `<input type="checkbox" value="${esc(t.id)}" checked /><span>${esc(t.label)}</span><span style="color:var(--dim);font-size:11px">${esc(t.kind)}</span>`;
     l.querySelector('input').addEventListener('change', (e) => l.classList.toggle('sel', e.target.checked));
     tWrap.appendChild(l);
   });
   if (!tWrap.childElementCount) tWrap.appendChild(el('p', { class: 'empty' }, 'no runnable targets were detected on this machine'));
 
+  const suiteSelect = $('optSuite');
+  suiteSelect.innerHTML = '';
+  Object.entries(cat.workload_sets || {}).forEach(([key, suite]) => {
+    suiteSelect.appendChild(el('option', { value: key }, suite.label));
+  });
+  suiteSelect.appendChild(el('option', { value: 'custom' }, '個別指定'));
+  suiteSelect.value = 'standard';
+  suiteSelect.addEventListener('change', () => {
+    const suite = cat.workload_sets?.[suiteSelect.value];
+    if (!suite) return;
+    wWrap.querySelectorAll('input').forEach((input) => {
+      input.checked = suite.workloads.includes(input.value);
+      input.parentElement.classList.toggle('sel', input.checked);
+    });
+  });
   wWrap.innerHTML = '';
   const defaults = ['dense_gemm', 'conv_vision', 'depthwise_mobile', 'transformer', 'llm_prefill', 'llm_decode'];
   (cat.workloads || []).forEach((w) => {
@@ -808,7 +841,10 @@ function buildRunModal() {
     const on = defaults.includes(w.key);
     const l = el('label', { class: on ? 'sel' : '', style: '--accent:#2563eb' });
     l.innerHTML = `<input type="checkbox" value="${esc(w.key)}" ${on ? 'checked' : ''} /><span>${esc(w.key)}</span><span style="color:var(--dim);font-size:11px">${esc(w.category)}</span>`;
-    l.querySelector('input').addEventListener('change', (e) => l.classList.toggle('sel', e.target.checked));
+    l.querySelector('input').addEventListener('change', (e) => {
+      l.classList.toggle('sel', e.target.checked);
+      suiteSelect.value = 'custom';
+    });
     l.title = w.blurb || '';
     wWrap.appendChild(l);
   });
@@ -817,20 +853,22 @@ function buildRunModal() {
 function openModal() {
   buildRunModal();
   const t = $('targetChecks');
-  if (t.childElementCount && !t.querySelector('input:checked')) {
-    t.querySelectorAll('input').forEach((i) => { i.checked = true; i.parentElement.classList.add('sel'); });
+  if (t.childElementCount && !t.querySelector('input:not(:disabled):checked')) {
+    t.querySelectorAll('input:not(:disabled)').forEach((i) => { i.checked = true; i.parentElement.classList.add('sel'); });
   }
   $('runModal').hidden = false;
 }
 
 async function startRun() {
-  const targets = [...$('targetChecks').querySelectorAll('input:checked')].map((i) => i.value);
+  const targets = [...$('targetChecks').querySelectorAll('input:not(:disabled):checked')].map((i) => i.value);
   const workloads = [...$('workloadChecks').querySelectorAll('input:checked')].map((i) => i.value);
   if (!targets.length) { toast('pick at least one device', true); return; }
   if (!workloads.length) { toast('pick at least one workload', true); return; }
   const body = {
     targets,
+    backend: $('optBackend').value,
     workloads,
+    suite: $('optSuite').value,
     mode: $('optMode').value,
     requests: Number($('optRequests').value || 0),
     repeats: Number($('optRepeats').value || 3),

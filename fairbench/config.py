@@ -15,6 +15,8 @@ from typing import Any
 @dataclass
 class RunConfig:
     # ---- work selection ---------------------------------------------------
+    backend: str = "all"  # all | ort | openvino | winml
+    suite: str = "standard"
     workloads: list[str] = field(default_factory=list)  # empty => all
     include_int8: bool = True
 
@@ -52,6 +54,8 @@ class RunConfig:
     relative_tolerance: float = 0.05  # 5% on fp compare (covers fp16/int8 drift)
 
     def __post_init__(self) -> None:
+        if self.backend not in ("all", "ort", "openvino", "winml"):
+            raise ValueError("backend must be all, ort, openvino or winml")
         if self.mode not in ("latency", "throughput"):
             raise ValueError("mode must be latency or throughput")
         if not isinstance(self.requests, int) or not 0 <= self.requests <= 32:
