@@ -263,7 +263,8 @@ def run_suite(
             "power_sources": power_sources,
         }
         tag = f"{_slug(target.id)}--{workload}--r{repeat}"
-        timeout = cfg.max_seconds + 420.0
+        trials = 4 if cfg.mode == "throughput" and not cfg.requests else 1
+        timeout = trials * (cfg.max_seconds + 420.0)
         result = spawn_worker(job, timeout=timeout, tag=tag)
         result["repeat_index"] = repeat
         result["precision"] = precision
@@ -324,6 +325,9 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "target_label": base.get("target_label"),
             "precision": base.get("precision") or precision_of(workload),
             "session": base.get("session", {}),
+            "measurement_mode": base.get("measurement_mode", "latency"),
+            "concurrent_requests_per_repeat": [c.get("concurrent_requests", 1) for c in good],
+            "throughput_trials": [c.get("throughput_trials", []) for c in good] if base.get("measurement_mode") == "throughput" else [],
             "repeats_requested": len(items),
             "repeats_ok": len(good),
         }

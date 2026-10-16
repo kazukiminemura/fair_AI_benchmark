@@ -94,6 +94,79 @@ def relative_l2(outputs: list[np.ndarray], reference: dict[str, Any]) -> float |
 # --------------------------------------------------------------------------
 # the measurement
 # --------------------------------------------------------------------------
+def _run_throughput(backend, compiled, built, target, cfg, feed, result, job):
+    from dataclasses import replace
+
+    from .throughput import measure, measure_processes
+
+    candidates = [cfg.requests] if cfg.requests else [1, 2, 4, 8]
+    trials = []
+    successful = []
+    sampler = PowerSampler(sources=job.get("power_sources") or [], enabled=cfg.measure_power)
+    sampler.start()
+    try:
+        for count in candidates:
+            try:
+                runners = []
+                lane_cfg = replace(cfg, threads=max(1, cfg.resolve_threads() // count))
+                for _ in range(0 if target.device == "DmlExecutionProvider" else count):
+                    if target.backend == "openvino":
+                        # CompiledModel.__call__ shares a cached InferRequest;
+                        # explicit requests avoid sharing mutable request state.
+                        request = compiled.handle.create_infer_request()
+                        def run(request=request):
+                            output = request.infer(feed, share_inputs=False, share_outputs=False)
+                            return [np.asarray(output[name]) for name in compiled.output_names]
+                    else:
+                        # DirectML forbids concurrent Run calls on one session.
+                        # Give every lane a separate session on all ORT providers.
+                        model = backend.compile(built, target, lane_cfg, job.get("precision", "fp32"))
+                        if model.meta.get("fallback_used"):
+                            raise BackendError("Requested accelerator fell back to another provider")
+                        def run(model=model):
+                            return backend.run(model, feed)
+                    for _ in range(max(1, cfg.warmup)):
+                        run()
+                    runners.append(run)
+                trial = (measure_processes(job, cfg, count) if target.device == "DmlExecutionProvider"
+                         else measure(runners, cfg))
+                trial["power"] = sampler.summary((trial["start"], trial["end"])).to_dict()
+                trial["threads_per_session"] = lane_cfg.resolve_threads() if target.backend == "ort" else None
+                successful.append(trial)
+                trials.append({k: v for k, v in trial.items() if k != "latencies_ms"})
+            except Exception as exc:
+                trials.append({"requests": count, "error": str(exc), "ok": False})
+        if not successful:
+            raise BackendError(f"All throughput trials failed: {trials}")
+        if len(successful) != len(trials):
+            result["warnings"].append("Some concurrency candidates failed; the reported maximum covers successful candidates only.")
+        best = max(successful, key=lambda trial: trial["units_per_s"])
+        if best["wall_s"] < cfg.min_seconds:
+            result["warnings"].append("Selected throughput trial ended before the requested minimum duration; increase max_iterations or the time budget.")
+        stats = summarise(best["latencies_ms"])
+        power = best["power"]
+        units = best["units_per_s"]
+        result.update({
+            "ok": True, "phase": "done", "measurement_mode": "throughput",
+            "concurrent_requests": best["requests"], "throughput_trials": trials,
+            "throughput_search": "fixed" if cfg.requests else "best observed among 1,2,4,8 requests",
+            "iterations": best["iterations"], "wall_s": best["wall_s"],
+            "latency": stats.to_dict(), "units_per_s": units,
+            "flops_per_s": built.flops * units, "power": power,
+            "host_cpu_seconds": best["host_cpu_seconds"],
+            "host_cpu_seconds_per_inference": best["host_cpu_seconds"] / best["iterations"],
+            "host_cpu_cores_used": best["host_cpu_seconds"] / best["wall_s"],
+            "energy_per_inference_j": power.get("average_watts") / units if power.get("available") and power.get("average_watts") else None,
+        })
+        result["warnings"].append("Throughput is completed requests / wall time including drain; latency is per-request under concurrent load. Maximum is limited to tested request counts.")
+        return result
+    except Exception as exc:
+        result.update({"error": str(exc), "phase": "throughput"})
+        return result
+    finally:
+        sampler.stop()
+
+
 def run_cell(job: dict[str, Any]) -> dict[str, Any]:
     target = Target(**job["target"])
     key = job["workload"]
@@ -112,6 +185,7 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
         "workload": key,
         "precision": precision,
         "repeat_index": repeat_index,
+        "measurement_mode": cfg.mode,
         "error": None,
         "warnings": [],
     }
@@ -189,6 +263,11 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:
             result["correctness"] = {"checked": False, "valid": None, "error": str(exc)}
             warnings.append(f"correctness probe failed: {exc}")
+
+    if cfg.mode == "throughput":
+        measured = _run_throughput(backend, compiled, built, target, cfg, feed, result, job)
+        measured["elapsed_s"] = time.perf_counter() - started
+        return measured
 
     # ---- warm-up ------------------------------------------------------
     try:

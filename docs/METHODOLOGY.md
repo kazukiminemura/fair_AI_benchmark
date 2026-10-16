@@ -172,3 +172,28 @@ rankings may legitimately differ by model; no device is guaranteed to win.
 
 Results produced before this change retain their original scores and precision
 settings. Run a new suite to measure the updated GPU inference policy.
+
+## Sustained throughput mode
+
+`--mode throughput` changes OpenVINO's performance hint to THROUGHPUT and runs
+independent InferRequests concurrently. ORT uses one independent session per
+lane. DirectML lanes use separate processes to isolate native device state;
+other ORT providers use separate sessions on worker threads.
+The ORT thread budget per session is max(1, configured threads / lane count).
+All lanes are warmed before timing and retain host input/output transfers.
+The graph, batch size and seed are unchanged. Threads submit synchronous native
+inference calls concurrently; this is not a device-only kernel benchmark.
+
+Auto search tests 1, 2, 4 and 8 requests for the configured time per candidate.
+`--requests N` fixes concurrency (1..32). Throughput is the number of completed
+requests divided by wall time from simultaneous release through the final
+completion, including pipeline drain. Request latency is measured under load;
+it is not the inverse of throughput. Raw candidate counts, durations, rates and
+selected request counts are saved. Each repeat selects its best candidate and
+repeat aggregation still uses the median; exploratory best-of-search values
+can be optimistic, so use fixed concurrency for confirmation. Candidate failures
+are recorded rather than silently counted as successful inference.
+
+This bounded search measures an observed maximum, not an exhaustive maximum.
+Compare machines using the same mode, search range, time budget and model set.
+Default latency mode and previously saved results retain their original meaning.

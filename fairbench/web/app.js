@@ -371,6 +371,7 @@ function renderHero(rep) {
     sys.memory ? `${sys.memory.total_gib} GiB` : null,
     rep.config ? `threads=${rep.config.threads || rep.config.physical_cores || 'auto'}` : null,
     rep.config ? `${rep.config.repeats} repeats` : null,
+    rep.config?.mode === 'throughput' ? '最大スループット（並列実行）' : '単発の遅延',
   ].filter(Boolean).forEach((t) => {
     const s = el('span', {}, t);
     meta.appendChild(s);
@@ -708,6 +709,8 @@ function renderProvenance(rep) {
     ['min iterations', cfg.min_iterations],
     ['min seconds', cfg.min_seconds],
     ['max seconds', cfg.max_seconds],
+    ['mode', cfg.mode || 'latency'],
+    ['parallel requests', cfg.mode === 'throughput' ? (cfg.requests || 'auto: 1/2/4/8') : 1],
     ['repeats', cfg.repeats],
     ['cooldown', cfg.cooldown_seconds + 's'],
     ['cpu threads', cfg.threads || cfg.physical_cores],
@@ -842,6 +845,8 @@ async function startRun() {
   const body = {
     targets,
     workloads,
+    mode: $('optMode').value,
+    requests: Number($('optRequests').value || 0),
     repeats: Number($('optRepeats').value || 3),
     min_seconds: Number($('optSeconds').value || 4),
     threads: $('optThreads').value ? Number($('optThreads').value) : null,

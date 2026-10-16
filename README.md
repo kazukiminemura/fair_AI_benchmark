@@ -22,6 +22,19 @@ uv run fairbench run --quick
 uv run fairbench run --full
 ```
 
+最大スループットを測る場合：
+
+```sh
+uv run fairbench run --mode throughput --full
+```
+
+並列数1・2・4・8で探索し、各繰り返しの最高実測値を採用します。
+`--requests 16`などで並列数を固定できます（上限32）。
+ダッシュボードの「測定モード」からも選べます。
+1候補ごとに指定の測定時間を使うため、自動探索では計測が約4倍になります。
+これは探索範囲内の最大値で、ハードウェアの理論最大値を保証しません。
+単発遅延モードとは別の条件として比較してください。
+
 比較するPCはAC電源につなぎ、電源設定をそろえて実行してください。
 結果は`results/`にJSONで保存され、ダッシュボードで比較できます。
 `--quick`は動作確認、`--full`は本計測用です。
@@ -59,6 +72,10 @@ AMD公式の[対応環境と前提条件](https://ryzenai.docs.amd.com/en/latest
 ダウンロード済みのSDKは`uv run fairbench setup-npu --installer "C:\path\ryzen-ai-1.8.0.exe"`で指定できます。
 導入成功後も、ベンチマークモデルの対応状況は`verify`で確認してください。
 
+問題がある場合は`uv run fairbench setup-npu --check`で、インストールを行わずに
+各Python環境・実行プロバイダー・読み込みエラーを再取得できます。
+
+Conda環境の検出と計測は`conda run`で実行し、SDKの環境設定を有効化します。
 Condaに登録済みの環境は自動探索します。検出されない場合は、その環境のPythonを
 `FAIRBENCH_PYTHON`に指定してください。AMD環境に通常のONNX RuntimeやDirectML版を追加すると
 AMD版が上書きされるため避けてください。

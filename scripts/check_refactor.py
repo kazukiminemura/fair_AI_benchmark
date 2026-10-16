@@ -20,6 +20,84 @@ from fairbench.runner import _score, verify_targets
 from fairbench.system import PowerInfo, SystemFingerprint
 
 
+def check_throughput() -> None:
+    import threading
+    import time
+
+    from fairbench.throughput import measure, measure_processes
+
+    lock = threading.Lock()
+    active = peak = completed = 0
+    def run():
+        nonlocal active, peak, completed
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.005)
+        with lock:
+            active -= 1
+            completed += 1
+    cfg = RunConfig(mode="throughput", requests=4, min_iterations=12,
+                    max_iterations=12, min_seconds=0, max_seconds=2)
+    result = measure([run] * 4, cfg)
+    assert completed == result["iterations"] == len(result["latencies_ms"]) == 12
+    assert peak > 1 and active == 0
+    assert result["units_per_s"] == completed / result["wall_s"]
+    def broken():
+        raise RuntimeError("inference failed")
+    try:
+        measure([broken, run], cfg)
+    except RuntimeError as exc:
+        assert str(exc) == "inference failed"
+    else:
+        raise AssertionError("inference failure was swallowed")
+    target = Target("throughput-cpu", "ort", "CPUExecutionProvider", "cpu", "unknown", "CPU")
+    cfg.requests = 2
+    cfg.warmup = 1
+    cfg.measure_power = False
+    cfg.threads = 1
+    with TemporaryDirectory() as directory, patch.object(worker_process, "JOB_DIR", Path(directory)):
+        measured = worker_process.spawn_worker({"target": target.to_dict(), "workload": "smoke", "cfg": cfg.to_dict()}, 60, "throughput")
+    assert measured["ok"], measured
+    assert measured["concurrent_requests"] == 2 and measured["iterations"] == 12
+    assert measured["measurement_mode"] == "throughput"
+    assert measured["correctness"]["valid"]
+    isolated = measure_processes({"target": target.to_dict(), "workload": "smoke"}, cfg, 2)
+    assert isolated["iterations"] == 12 and isolated["isolation"] == "process"
+    print("Throughput checks passed: concurrent execution, completed counts, drain, exceptions, real CPU worker.")
+
+
+def check_conda_launch() -> None:
+    with TemporaryDirectory() as directory:
+        base = Path(directory)
+        prefix = base / "envs" / "ryzen-ai-test"
+        meta = prefix / "conda-meta"
+        meta.mkdir(parents=True)
+        history = meta / "history"
+        history.write_text("before")
+        python = prefix / "python.exe"
+        python.touch()
+        conda = base / "Scripts" / "conda.exe"
+        conda.parent.mkdir()
+        conda.touch()
+        with patch.dict("os.environ", {"CONDA_EXE": str(conda)}):
+            command = interp.python_command(str(python), ["-c", "pass"])
+            assert command == [str(conda), "run", "--no-capture-output", "--prefix", str(prefix), str(python), "-c", "pass"]
+            worker_cmd = worker_process._worker_command(str(python), Path("job"), Path("out"))
+            assert worker_cmd[:6] == command[:6]
+            assert worker_cmd[-2:] == ["job", "out"]
+            payload = (interp.MARKER + json.dumps({"providers": ["VitisAIExecutionProvider"]})).encode()
+            with patch.object(interp.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, payload, b"")) as run:
+                info = interp.probe(str(python))
+            assert info.providers == ["VitisAIExecutionProvider"]
+            assert info.label == "ryzen-ai-test"
+            assert run.call_args.args[0][:6] == command[:6]
+        before = interp._signature(str(python))
+        history.write_text("after SDK installation")
+        assert before != interp._signature(str(python))
+    print("Conda launch passed: activation for discovery/workers, environment label, SDK cache invalidation.")
+
+
 def check_npu_setup() -> None:
     args = cli.build_parser().parse_args(["setup-npu", "--installer", "sdk.exe"])
     with patch.object(cli.sys, "platform", "linux"), patch("subprocess.run") as run:
@@ -222,6 +300,8 @@ def check_directml_options() -> None:
 
 
 if __name__ == "__main__":
+    check_throughput()
+    check_conda_launch()
     check_npu_setup()
     check_conda_discovery()
     check_runtime_refresh()

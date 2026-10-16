@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import paths
+from . import interp, paths
 
 JOB_DIR = Path(".cache") / "jobs"
 
@@ -35,7 +35,7 @@ def _worker_command(python: str, job_path: Path, out_path: Path) -> list[str]:
     """
     if paths.is_own_interpreter(python) and paths.FROZEN:
         return [python, "--worker", str(job_path), str(out_path)]
-    return [python, "-X", "faulthandler", "-m", "fairbench.worker", str(job_path), str(out_path)]
+    return interp.python_command(python, ["-X", "faulthandler", "-m", "fairbench.worker", str(job_path), str(out_path)])
 
 
 def spawn_worker(job: dict[str, Any], timeout: float, tag: str) -> dict[str, Any]:
@@ -59,9 +59,9 @@ def spawn_worker(job: dict[str, Any], timeout: float, tag: str) -> dict[str, Any
             ),
             "phase": "spawn",
         }
-    cmd = _worker_command(python, job_path, out_path)
     started = time.perf_counter()
     try:
+        cmd = _worker_command(python, job_path, out_path)
         proc = subprocess.run(
             cmd,
             cwd=str(Path.cwd()),
@@ -71,12 +71,12 @@ def spawn_worker(job: dict[str, Any], timeout: float, tag: str) -> dict[str, Any
         )
         stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
         returncode = proc.returncode
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         return {
             "ok": False,
             "target_id": job["target"]["id"],
             "workload": job["workload"],
-            "error": f"interpreter for this device is missing: {python}",
+            "error": f"interpreter or Conda launcher for this device is missing: {python}: {exc}",
             "phase": "spawn",
         }
     except subprocess.TimeoutExpired:

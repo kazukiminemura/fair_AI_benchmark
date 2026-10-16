@@ -118,6 +118,8 @@ def _run_thread(options: dict[str, Any]) -> None:
     try:
         quick = bool(options.get("quick"))
         cfg = RunConfig(
+            mode=str(options.get("mode", "latency")),
+            requests=int(options.get("requests", 0)),
             warmup=2 if quick else 5,
             min_iterations=5 if quick else 15,
             min_seconds=1.0 if quick else float(options.get("min_seconds", 4.0)),

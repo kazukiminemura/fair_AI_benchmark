@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -146,12 +147,49 @@ def candidates() -> list[str]:
     return unique
 
 
+def python_command(interpreter: str, arguments: list[str]) -> list[str]:
+    """Activate external Conda runtimes for both discovery and measurement.
+
+    DLL search paths and vendor activate.d scripts are part of a Conda runtime;
+    launching its python.exe directly does not reproduce conda activate.
+    """
+    python = Path(interpreter)
+    prefix = python.parent
+    if prefix.name.lower() in ("bin", "scripts"):
+        prefix = prefix.parent
+    if not paths.is_own_interpreter(interpreter) and (prefix / "conda-meta").is_dir():
+        base = prefix.parent.parent if prefix.parent.name.lower() == "envs" else prefix
+        candidates = [
+            os.environ.get("CONDA_EXE", ""),
+            str(base / "Scripts" / "conda.exe"),
+            str(base / "bin" / "conda"),
+            shutil.which("conda.exe") or shutil.which("conda") or "",
+        ]
+        conda = next((path for path in candidates if path and Path(path).is_file()), None)
+        if not conda:
+            raise FileNotFoundError(
+                f"Conda environment found at {prefix}, but its conda executable was not found. "
+                "Run fairbench from the Miniforge Prompt or set CONDA_EXE to the base installation's conda.exe."
+            )
+        return [conda, "run", "--no-capture-output", "--prefix", str(prefix), interpreter, *arguments]
+    return [interpreter, *arguments]
+
+
 def _signature(path: str) -> str:
-    try:
-        st = os.stat(path)
-        return f"{int(st.st_mtime)}:{st.st_size}"
-    except Exception:
-        return "0:0"
+    python = Path(path)
+    prefix = python.parent.parent if python.parent.name.lower() in ("bin", "scripts") else python.parent
+    # Installing SDK packages leaves python.exe unchanged. Include Conda's
+    # transaction history and the Windows ORT package in cache invalidation.
+    files = [python, prefix / "conda-meta" / "history",
+             prefix / "Lib" / "site-packages" / "onnxruntime" / "__init__.py"]
+    signatures = []
+    for file in files:
+        try:
+            st = file.stat()
+            signatures.append(f"{st.st_mtime_ns}:{st.st_size}")
+        except OSError:
+            signatures.append("missing")
+    return ":".join(signatures)
 
 
 def _load_cache() -> dict[str, Any]:
@@ -181,7 +219,8 @@ def probe(interpreter: str, timeout: float = 120.0) -> Interpreter:
     elif own:
         info.label = "main environment"
     else:
-        info.label = Path(interpreter).parent.parent.name or Path(interpreter).name
+        parent = Path(interpreter).parent
+        info.label = (parent.parent if parent.name.lower() in ("scripts", "bin") else parent).name
 
     if own:
         # No subprocess needed: we already are that interpreter.
@@ -198,8 +237,8 @@ def probe(interpreter: str, timeout: float = 120.0) -> Interpreter:
         info.error = "interpreter not found"
         return info
 
-    cmd = [interpreter, "-c", PROBE_SOURCE]
     try:
+        cmd = python_command(interpreter, ["-c", PROBE_SOURCE])
         proc = subprocess.run(cmd, capture_output=True, timeout=timeout, cwd=str(paths.project_root()))
     except Exception as exc:
         info.error = f"could not run probe: {exc}"
@@ -237,7 +276,7 @@ def probe_all(refresh: bool = False) -> list[Interpreter]:
         entry = cache.get(key)
         # The executable does not change when uv sync replaces runtime wheels.
         # Always read the current environment so an old CPU-only cache cannot hide GPUs.
-        if not refresh and not paths.is_own_interpreter(path) and entry and entry.get("signature") == sig and entry.get("result"):
+        if not refresh and not paths.is_own_interpreter(path) and entry and entry.get("signature") == sig and entry.get("result") and not entry["result"].get("error"):
             info = Interpreter(**entry["result"])
         else:
             info = probe(path)
