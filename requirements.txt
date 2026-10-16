@@ -1,23 +1,2 @@
-# Core (required) -----------------------------------------------------------
-numpy>=1.26
-onnx>=1.16
-onnxruntime>=1.18
-
-# Optional backends / devices ------------------------------------------------
-# Intel CPU + iGPU + NPU (Core Ultra). Needed for any NPU number on Intel.
-# pip install '.[openvino]'
-
-# NVIDIA GPU via ONNX Runtime
-# onnxruntime-gpu
-
-# AMD / Intel GPU on Windows via DirectML
-# onnxruntime-directml
-
-# AMD Ryzen AI (XDNA) NPU
-# onnxruntime-vitisai
-
-# Qualcomm Snapdragon X NPU
-# onnxruntime-qnn
-
-# Reference cross-check only
-# torch
+# Keep the platform-specific dependencies in pyproject.toml as the single source.
+.

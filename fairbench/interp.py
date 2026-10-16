@@ -219,7 +219,9 @@ def probe_all(refresh: bool = False) -> list[Interpreter]:
         key = path.lower()
         sig = _signature(path)
         entry = cache.get(key)
-        if not refresh and entry and entry.get("signature") == sig and entry.get("result"):
+        # The executable does not change when uv sync replaces runtime wheels.
+        # Always read the current environment so an old CPU-only cache cannot hide GPUs.
+        if not refresh and not paths.is_own_interpreter(path) and entry and entry.get("signature") == sig and entry.get("result"):
             info = Interpreter(**entry["result"])
         else:
             info = probe(path)
