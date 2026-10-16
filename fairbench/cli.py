@@ -104,6 +104,8 @@ def cmd_workloads(args: argparse.Namespace) -> int:
 
 def _config_from_args(args: argparse.Namespace) -> RunConfig:
     cfg = RunConfig(
+        mode=args.mode,
+        requests=args.requests,
         warmup=args.warmup,
         min_iterations=args.iterations,
         min_seconds=args.min_seconds,
@@ -168,7 +170,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     workloads = resolve_workloads(cfg, args.workloads)
     print(f"{c('PLAN', BOLD)}  {len(workloads)} workloads x {cfg.repeats} repeat(s), "
-          f"{cfg.min_seconds:g}s minimum per cell, threads={cfg.resolve_threads()}")
+          f"{cfg.min_seconds:g}s minimum per trial, mode={cfg.mode}, requests={cfg.requests or 'auto'}, threads={cfg.resolve_threads()}")
     print(f"{c('WORK', BOLD)}  {', '.join(workloads)}\n")
 
     t0 = time.time()
@@ -273,15 +275,23 @@ def cmd_setup_npu(args: argparse.Namespace) -> int:
     command = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)]
     if args.installer:
         command += ["-Installer", str(Path(args.installer).resolve())]
-    result = subprocess.run(command)
-    if result.returncode:
-        return result.returncode
+    if not args.check:
+        result = subprocess.run(command)
+        if result.returncode:
+            return result.returncode
     from . import interp
 
     interp.CACHE.unlink(missing_ok=True)
-    amd = [i for i in interp.probe_all(refresh=True) if "VitisAIExecutionProvider" in i.providers]
+    interpreters = interp.probe_all(refresh=True)
+    for info in interpreters:
+        print(f"{info.path}: {', '.join(info.providers) or 'no providers'}")
+        if info.error:
+            print(f"  {info.error}")
+    amd = [i for i in interpreters if "VitisAIExecutionProvider" in i.providers]
     if not amd:
-        print("Installation finished but VitisAIExecutionProvider is unavailable. Restart the terminal after any required reboot, then retry setup-npu.")
+        print("VitisAIExecutionProvider was not detected. Review the per-interpreter errors above. "
+              "If no AMD environment is listed, set FAIRBENCH_PYTHON to its python.exe. "
+              "If installation required a reboot, restart Windows and the terminal first.")
         return 1
     print("AMD runtime detected. Run 'uv run fairbench verify' to check model execution.")
     return cmd_devices(args)
@@ -493,6 +503,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_ver.set_defaults(func=cmd_verify)
 
     p_run = sub.add_parser("run", help="run the benchmark suite")
+    p_run.add_argument("--mode", choices=["latency", "throughput"], default="latency")
+    p_run.add_argument("--requests", type=int, choices=range(33), default=0, metavar="0..32", help="throughput concurrency; 0 sweeps 1, 2, 4, 8")
     p_run.add_argument("--targets", nargs="*", default=None, help="target ids from `fairbench devices`")
     p_run.add_argument("--workloads", nargs="*", default=None, help="workload keys (default: a representative set)")
     p_run.add_argument("--out", default=None, help="output json path")
@@ -530,6 +542,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_gpu.set_defaults(func=cmd_setup_gpu)
 
     p_npu = sub.add_parser("setup-npu", help="install AMD NPU driver and Ryzen AI Software on Windows")
+    p_npu.add_argument("--check", action="store_true", help="refresh AMD runtime diagnostics without installing anything")
     p_npu.add_argument("--installer", help="previously downloaded official Ryzen AI installer (.exe)")
     p_npu.set_defaults(func=cmd_setup_npu)
 

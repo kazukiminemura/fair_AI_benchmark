@@ -6,8 +6,8 @@ which is deliberate: the same runtime on all three devices means the
 CPU-vs-GPU-vs-NPU comparison inside one machine is apples-to-apples, and it
 gives Intel's own toolchain a fair shot on CPU.
 
-Everything is forced to a **single inference stream at LATENCY performance
-mode** so it can be compared with the single-stream ONNX Runtime numbers.
+Latency mode uses synchronous inference. Throughput mode enables the runtime
+THROUGHPUT hint and uses independent InferRequests concurrently.
 """
 
 from __future__ import annotations
@@ -135,7 +135,10 @@ class OpenVinoBackend(Backend):
         ov = self.ov
         props: dict[str, Any] = {}
         try:
-            props[ov.properties.hint.performance_mode()] = ov.properties.hint.PerformanceMode.LATENCY
+            props[ov.properties.hint.performance_mode()] = (
+                ov.properties.hint.PerformanceMode.THROUGHPUT if cfg.mode == "throughput"
+                else ov.properties.hint.PerformanceMode.LATENCY
+            )
         except Exception:
             pass
 

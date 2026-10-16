@@ -19,6 +19,8 @@ class RunConfig:
     include_int8: bool = True
 
     # ---- measurement policy ----------------------------------------------
+    mode: str = "latency"  # latency | throughput
+    requests: int = 0  # throughput: 0 sweeps 1/2/4/8; otherwise fixed concurrency
     warmup: int = 5
     min_iterations: int = 15
     max_iterations: int = 20000
@@ -48,6 +50,12 @@ class RunConfig:
     allow_battery: bool = False
     check_correctness: bool = True
     relative_tolerance: float = 0.05  # 5% on fp compare (covers fp16/int8 drift)
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("latency", "throughput"):
+            raise ValueError("mode must be latency or throughput")
+        if not isinstance(self.requests, int) or not 0 <= self.requests <= 32:
+            raise ValueError("requests must be an integer between 0 (auto) and 32")
 
     def resolve_threads(self) -> int:
         if self.threads and self.threads > 0:
