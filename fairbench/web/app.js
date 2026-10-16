@@ -41,6 +41,12 @@ function svg(tag, attrs = {}, text) {
 }
 const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : Number(v).toFixed(d);
 const fmtInt = (v) => (v === null || v === undefined) ? '—' : Math.round(v).toLocaleString();
+function formatComputeRate(row) {
+  if (!Number.isFinite(row.flops_per_s)) return '—';
+  return row.kind === 'npu'
+    ? `${fmt(row.flops_per_s / 1e12, 3)} TOPS`
+    : `${fmt(row.flops_per_s / 1e9, 1)} GFLOPS`;
+}
 function fmtBytes(b) {
   if (!b) return '—';
   const u = ['B', 'KB', 'MB', 'GB'];
@@ -607,7 +613,7 @@ function renderRadar(rep) {
 function renderTable(rep) {
   const table = $('resultTable');
   const rows = (rep.results || []).slice().sort((a, b) => (a.workload.localeCompare(b.workload)) || ((b.units_per_s || 0) - (a.units_per_s || 0)));
-  const cols = ['device', 'workload', 'prec', 'units/s', 'median ms', 'p90 ms', 'CV', 'GFLOPS', 'host CPU s/inf', 'W', 'J/inf', 'compile ms', 'spread'];
+  const cols = ['device', 'workload', 'prec', 'units/s', 'median ms', 'p90 ms', 'CV', '演算性能', 'host CPU s/inf', 'W', 'J/inf', 'compile ms', 'spread'];
   table.innerHTML = '';
   const thead = el('thead');
   const tr = el('tr');
@@ -642,7 +648,7 @@ function renderTable(rep) {
       cells.push(el('td', { class: 'num' }, fmt(r.latency_ms, 3)));
       cells.push(el('td', { class: 'muted' }, fmt(lat.p90_ms, 3)));
       cells.push(el('td', { class: (lat.cv_trimmed ?? lat.cv) > 0.05 ? 'flag' : 'muted', title: `trimmed CV ${lat.cv_trimmed !== undefined ? (lat.cv_trimmed * 100).toFixed(2) + '%' : 'n/a'}, ${lat.count || 0} iterations` }, lat.cv !== undefined ? (lat.cv * 100).toFixed(1) + '%' : '—'));
-      cells.push(el('td', { class: 'muted' }, fmt((r.flops_per_s || 0) / 1e9, 1)));
+      cells.push(el('td', { class: 'num', title: 'モデルの演算数 × 実測推論数からの換算値。メーカーの理論ピーク性能とは異なります。' }, formatComputeRate(r)));
       cells.push(el('td', { class: 'muted' }, fmt(r.host_cpu_seconds_per_inference, 4)));
       cells.push(el('td', { class: 'muted' }, r.power && r.power.average_watts ? fmt(r.power.average_watts, 1) : '—'));
       cells.push(el('td', { class: 'muted' }, r.energy_per_inference_j ? fmt(r.energy_per_inference_j, 3) : '—'));

@@ -193,15 +193,15 @@ def _print_summary(report: dict) -> None:
     if not rows:
         print(c("  Nothing completed successfully.", RED))
         return
-    print(f"  {'device':<26s} {'workload':<18s} {'unit/s':>10s} {'median ms':>10s} {'GFLOPS':>9s} {'idx':>6s}")
-    print(f"  {'-' * 26} {'-' * 18} {'-' * 10} {'-' * 10} {'-' * 9} {'-' * 6}")
+    print(f"  {'device':<26s} {'workload':<18s} {'unit/s':>10s} {'median ms':>10s} {'compute':>18s} {'idx':>6s}")
+    print(f"  {'-' * 26} {'-' * 18} {'-' * 10} {'-' * 10} {'-' * 18} {'-' * 6}")
     index = {i["target_id"]: i["ai_index"] for i in (report.get("scores") or {}).get("ai_index", [])}
     for r in sorted(rows, key=lambda r: (r["workload"], -(r.get("units_per_s") or 0))):
         idx = index.get(r["target_id"])
         print(
             f"  {r['target_label']:<26s} {r['workload']:<18s} "
             f"{r.get('units_per_s') or 0:>10.2f} {r.get('latency_ms') or 0:>10.3f} "
-            f"{(r.get('flops_per_s') or 0) / 1e9:>9.1f} "
+            f"{report_mod.format_compute_rate(r):>18s} "
             f"{(f'{idx:.2f}x' if idx else ''):>6s}"
         )
     grade = report.get("grade") or {}
@@ -287,8 +287,12 @@ def cmd_setup_winml(args: argparse.Namespace) -> int:
                              "windowsml[with-ort]==2.4.89", "onnx>=1.16"])
     if result.returncode:
         return result.returncode
-    result = subprocess.run([str(python), "-m", "fairbench.windowsml", "--setup"],
-                            env=worker_process._worker_env())
+    command = [str(python), "-m", "fairbench.windowsml", "--setup"]
+    if args.provider:
+        command += ["--provider", args.provider]
+    if args.require_npu:
+        command += ["--require-npu"]
+    result = subprocess.run(command, env=worker_process._worker_env())
     interp.CACHE.unlink(missing_ok=True)
     if result.returncode:
         return result.returncode
@@ -297,36 +301,55 @@ def cmd_setup_winml(args: argparse.Namespace) -> int:
 
 
 def cmd_setup_npu(args: argparse.Namespace) -> int:
-    """Run the Windows AMD installer workflow outside uv's Python environment."""
+    """Prepare AMD Vitis AI and prove an NPU inference can complete."""
     import subprocess
 
     if sys.platform != "win32":
         print("Automatic AMD NPU setup currently supports Windows only.")
         return 2
-    script = Path(__file__).with_name("setup_amd_npu.ps1")
-    command = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)]
-    if args.installer:
-        command += ["-Installer", str(Path(args.installer).resolve())]
     if not args.check:
-        result = subprocess.run(command)
-        if result.returncode:
-            return result.returncode
+        if args.sdk or args.installer:
+            script = Path(__file__).with_name("setup_amd_npu.ps1")
+            command = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)]
+            if args.installer:
+                command += ["-Installer", str(Path(args.installer).resolve())]
+            result = subprocess.run(command)
+            if result.returncode:
+                return result.returncode
+        else:
+            fp = system.collect()
+            if fp.cpu.vendor != "amd":
+                print("Run setup-npu on the AMD laptop. No installation was started.")
+                return 2
+            result = cmd_setup_winml(argparse.Namespace(provider="VitisAIExecutionProvider", require_npu=True))
+            if result:
+                return result
     from . import interp
 
     interp.CACHE.unlink(missing_ok=True)
     interpreters = interp.probe_all(refresh=True)
     for info in interpreters:
         print(f"{info.path}: {', '.join(info.providers) or 'no providers'}")
+        for device in info.winml_devices:
+            print(f"  Windows ML {device['kind'].upper()}: {device['provider']} - {device['description']}")
+        for note in info.winml_notes:
+            print(f"  {note}")
         if info.error:
             print(f"  {info.error}")
-    amd = [i for i in interpreters if "VitisAIExecutionProvider" in i.providers]
-    if not amd:
-        print("VitisAIExecutionProvider was not detected. Review the per-interpreter errors above. "
-              "If no AMD environment is listed, set FAIRBENCH_PYTHON to its python.exe. "
-              "If installation required a reboot, restart Windows and the terminal first.")
+    disc = discover()
+    targets = [target for target in disc.available()
+               if target.vendor == "amd" and target.kind == "npu" and target.device == "VitisAIExecutionProvider"]
+    if not targets:
+        print("AMD Vitis AI NPU was not detected. Install/update the AMD NPU driver and Windows, then retry setup-npu. "
+              "For an existing Ryzen AI SDK environment, set FAIRBENCH_PYTHON to its python.exe. "
+              "https://ryzenai.docs.amd.com/projects/WinML/en/latest/installation.html")
         return 1
-    print("AMD runtime detected. Run 'uv run fairbench verify' to check model execution.")
-    return cmd_devices(args)
+    verdicts = verify_targets(targets, RunConfig(measure_power=False), _print_progress)
+    if not any(verdict.get("ok") for verdict in verdicts.values()):
+        print("Vitis AI was found but NPU inference failed. See the verification error above; setup is incomplete.")
+        return 1
+    print("AMD Vitis AI NPU inference verified.")
+    return 0
 
 
 def cmd_setup_gpu(args: argparse.Namespace) -> int:
@@ -574,9 +597,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_gpu.set_defaults(func=cmd_setup_gpu)
 
     p_winml = sub.add_parser("setup-winml", help="prepare Windows ML and download compatible certified EPs")
+    p_winml.add_argument("--provider", help="download only this execution provider (e.g. VitisAIExecutionProvider)")
+    p_winml.add_argument("--require-npu", action="store_true", help="fail if the requested NPU is not exposed")
     p_winml.set_defaults(func=cmd_setup_winml)
 
-    p_npu = sub.add_parser("setup-npu", help="install AMD NPU driver and Ryzen AI Software on Windows")
+    p_npu = sub.add_parser("setup-npu", help="prepare and verify AMD Vitis AI NPU through Windows ML")
+    p_npu.add_argument("--sdk", action="store_true", help="use the legacy AMD driver/SDK installer instead of Windows ML")
     p_npu.add_argument("--check", action="store_true", help="refresh AMD runtime diagnostics without installing anything")
     p_npu.add_argument("--installer", help="previously downloaded official Ryzen AI installer (.exe)")
     p_npu.set_defaults(func=cmd_setup_npu)

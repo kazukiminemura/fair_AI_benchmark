@@ -74,29 +74,24 @@ GPU・NPUの利用には対応ハードウェアとメーカー製ドライバ�
 ランタイムの提供状況によってはOS・Pythonバージョンに制約があります。
 LinuxのGPUドライバー・権限設定も別途必要です。
 
-WindowsのAMD NPUは、追加のセットアップを実行します。
+WindowsのAMD NPU（Vitis AI）は次のコマンドでセットアップします。
 
 ```sh
 uv run fairbench setup-npu
-uv run fairbench verify
 ```
 
-`setup-npu`はMiniforge・CMake・Visual Studio C++ Build Toolsの不足分をwingetで導入し、
-AMDのSDKダウンロードページを開きます。ライセンスに同意して通常の「ダウンロード」フォルダーへ保存すると、
-AMD署名を検証してドライバーとSDKのインストーラーを起動し、完了後にランタイムを再検出します。
-ライセンス・管理者権限の確認とインストーラーの画面操作は必要です。
-再起動を求められた場合は再起動後に再実行してください。AMD機でのみ動作します。
-AMD公式の[対応環境と前提条件](https://ryzenai.docs.amd.com/en/latest/inst.html)に従います。
-ダウンロード済みのSDKは`uv run fairbench setup-npu --installer "C:\path\ryzen-ai-1.8.0.exe"`で指定できます。
-導入成功後も、ベンチマークモデルの対応状況は`verify`で確認してください。
+Windows MLの認証済み`VitisAIExecutionProvider`だけを取得し、AMD NPUを検出して
+推論できることまで確認します。GPUしか見つからない場合や推論が失敗する場合は、
+セットアップ未完了としてエラーを返します。Windows 11 24H2以降と対応するAMD NPUドライバーが必要です。
+ドライバーは[AMD公式手順](https://ryzenai.docs.amd.com/projects/WinML/en/latest/installation.html)に従って導入してください。
+EPカタログに対象が出ない場合は、Windows Update・ドライバー・ハードウェアの対応状況を確認してください。
 
-問題がある場合は`uv run fairbench setup-npu --check`で、インストールを行わずに
-各Python環境・実行プロバイダー・読み込みエラーを再取得できます。
+`uv run fairbench setup-npu --check`で再インストールせず診断・推論確認できます。
+従来のRyzen AI SDK導入経路は`--sdk`、取得済みのSDKは`--installer "C:\path\ryzen-ai-1.8.0.exe"`で指定できます。
+SDK経路では同意・管理者権限確認とインストーラー画面の操作が必要です。
+Conda環境を自動検出できない場合は、そのPythonを`FAIRBENCH_PYTHON`に指定してください。
+AMD環境に通常のONNX RuntimeやDirectML版を追加するとAMD版が上書きされるため避けてください。
 
-Conda環境の検出と計測は`conda run`で実行し、SDKの環境設定を有効化します。
-Condaに登録済みの環境は自動探索します。検出されない場合は、その環境のPythonを
-`FAIRBENCH_PYTHON`に指定してください。AMD環境に通常のONNX RuntimeやDirectML版を追加すると
-AMD版が上書きされるため避けてください。
 Qualcomm NPUも対応するQNN環境が別途必要です。複数のPythonはOSのパス区切り文字で指定できます。
 
 NVIDIAでCUDAを使う場合は、専用環境を作成します（Windowsの標準GPU計測には不要）。

@@ -24,6 +24,15 @@ def json_safe(value: Any) -> Any:
     return value
 
 
+def format_compute_rate(row: dict[str, Any]) -> str:
+    value = row.get("flops_per_s")
+    if value is None or not math.isfinite(value):
+        return "—"
+    if row.get("kind") == "npu":
+        return f"{value / 1e12:.3f} TOPS"
+    return f"{value / 1e9:.1f} GFLOPS"
+
+
 def default_name(prefix: str = "fairbench") -> str:
     stamp = time.strftime("%Y%m%d-%H%M%S")
     return f"{prefix}-{stamp}.json"
