@@ -47,7 +47,7 @@ PROBE_SOURCE = (
 )
 
 # Names we look for automatically, in priority order.
-VENV_NAMES = (".venv-gpu", ".venv-dml", ".venv-cuda", ".venv")
+VENV_NAMES = (".venv-gpu", ".venv-dml", ".venv-cuda", ".venv-ryzenai", ".venv")
 
 
 @dataclass
@@ -105,6 +105,22 @@ def candidates() -> list[str]:
     for item in extra.split(os.pathsep):
         if item.strip():
             found.append(item.strip())
+
+    # AMD's installer creates a Conda environment, not a project-local venv.
+    # Conda records custom installation paths here as well as default ones.
+    registry = Path.home() / ".conda" / "environments.txt"
+    prefixes = [os.environ.get("CONDA_PREFIX", "")]
+    try:
+        prefixes += registry.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        pass
+    for prefix in prefixes:
+        if prefix.strip():
+            root = Path(prefix.strip())
+            for python in (root / "python.exe", root / "bin" / "python"):
+                if python.is_file():
+                    found.append(str(python))
+                    break
 
     roots: list[Path] = []
     for root in (paths.work_root(), Path.cwd()):

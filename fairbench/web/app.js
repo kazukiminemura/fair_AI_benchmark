@@ -438,6 +438,8 @@ function renderIndexChart(rep) {
   host.appendChild(s);
   const base = (rep.scores || {}).baseline;
   if (base) host.appendChild(el('p', { class: 'empty' }, `baseline: ${base.label} (${base.definition}), ${base.workloads} workloads`));
+  const common = rep.scores?.comparison_workloads;
+  if (common) host.appendChild(el('p', { class: 'empty' }, `総合点: 全比較対象に共通する${common.length}モデル。除外: ${(rep.scores.excluded_workloads || []).join(', ') || 'なし'}。入力グラフの精度と実行精度は異なる場合があります。`));
 }
 
 function renderGrade(rep) {

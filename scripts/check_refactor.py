@@ -20,6 +20,37 @@ from fairbench.runner import _score, verify_targets
 from fairbench.system import PowerInfo, SystemFingerprint
 
 
+def check_npu_setup() -> None:
+    args = cli.build_parser().parse_args(["setup-npu", "--installer", "sdk.exe"])
+    with patch.object(cli.sys, "platform", "linux"), patch("subprocess.run") as run:
+        assert args.func(args) == 2
+        run.assert_not_called()
+    with patch.object(cli.sys, "platform", "win32"), patch("subprocess.run") as run:
+        run.return_value.returncode = 7
+        assert args.func(args) == 7
+        command = run.call_args.args[0]
+        assert command[-2:] == ["-Installer", str(Path("sdk.exe").resolve())]
+        assert Path(command[command.index("-File") + 1]).is_file()
+    print("NPU setup checks passed: platform guard, installer path, failure propagation.")
+
+
+def check_conda_discovery() -> None:
+    with TemporaryDirectory() as directory:
+        home = Path(directory)
+        registry = home / ".conda" / "environments.txt"
+        registry.parent.mkdir()
+        env = home / "custom-ryzen-env"
+        env.mkdir()
+        python = env / "python.exe"
+        python.touch()
+        registry.write_text(str(env) + "\n" + str(home / "missing"), encoding="utf-8")
+        with patch.object(interp.Path, "home", return_value=home):
+            candidates = interp.candidates()
+        assert str(python.resolve()) in candidates
+        assert not any("missing" in path for path in candidates)
+    print("Conda discovery passed: custom paths and missing environments.")
+
+
 def check_runtime_refresh() -> None:
     path = sys.executable
     stale = interp.Interpreter(path, primary=True, available=True, providers=["CPUExecutionProvider"])
@@ -104,13 +135,22 @@ def check_scores() -> None:
     ]
     scores = _score({"results": rows})
     index = {entry["target_id"]: entry for entry in scores["ai_index"]}
-    assert abs(index["gpu"]["ai_index"] - 4) < 1e-12
-    assert index["gpu"]["workloads"] == 2
-    assert math.isclose(scores["cpu_index"], 100)  # First CPU in the descending ranking.
+    assert abs(index["gpu"]["ai_index"] - 2) < 1e-12
+    assert index["gpu"]["workloads"] == 1
+    assert math.isclose(scores["cpu_index"], 1)  # The chosen CPU baseline is always 1.
     assert scores["baseline"]["target_id"] == "cpu"
     assert "failed" not in index and "npu" not in index
-    assert [entry["target_id"] for entry in scores["efficiency"]] == ["npu", "gpu"]
-    assert abs(scores["efficiency"][1]["units_per_joule"] - 8) < 1e-12
+    assert [entry["target_id"] for entry in scores["efficiency"]] == ["gpu"]
+    assert abs(scores["efficiency"][0]["units_per_joule"] - 4) < 1e-12
+    assert scores["comparison_workloads"] == ["a"]  # ov-cpu only completed a.
+    partial = _score({"results": rows[:4] + [
+        row("npu", "npu", "a", 30), {**row("npu", "npu", "b", 1), "ok": False}
+    ]})
+    assert partial["comparison_workloads"] == ["a"]
+    assert partial["excluded_workloads"] == ["b"]
+    ranks = {item["target_id"]: item for item in partial["ai_index"]}
+    assert ranks["gpu"]["ai_index"] == 2
+    assert all(item["workloads"] == 1 for item in ranks.values())
     assert _score({"results": [rows[2]]})["baseline"] is None
     fallback = _score({"results": [rows[5]]})
     assert fallback["baseline"]["target_id"] == "ov-cpu"
@@ -156,6 +196,21 @@ def check_battery_cli() -> None:
     print("Battery CLI checks passed: battery override, AC, desktop, unknown AC, default refusal.")
 
 
+def check_openvino_precision() -> None:
+    try:
+        from fairbench.backends.openvino_backend import OpenVinoBackend
+        if not OpenVinoBackend.is_installed():
+            return
+        backend = OpenVinoBackend()
+        prop = backend.ov.properties.hint.inference_precision()
+        for kind, device in (("gpu", "GPU"), ("npu", "NPU")):
+            target = Target(device, "openvino", device, kind, "intel", device)
+            assert backend._properties(target, RunConfig(), "fp32")[prop] == backend.ov.Type.f16
+    except ImportError:
+        return
+    print("OpenVINO accelerator precision hints match (FP16 for GPU and NPU).")
+
+
 def check_directml_options() -> None:
     backend = OrtBackend()
     for provider in ("CPUExecutionProvider", "DmlExecutionProvider"):
@@ -167,9 +222,12 @@ def check_directml_options() -> None:
 
 
 if __name__ == "__main__":
+    check_npu_setup()
+    check_conda_discovery()
     check_runtime_refresh()
     check_worker_failures()
     check_scores()
     check_cpu_worker()
     check_battery_cli()
     check_directml_options()
+    check_openvino_precision()

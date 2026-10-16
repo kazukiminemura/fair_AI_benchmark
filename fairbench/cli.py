@@ -262,6 +262,31 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+def cmd_setup_npu(args: argparse.Namespace) -> int:
+    """Run the Windows AMD installer workflow outside uv's Python environment."""
+    import subprocess
+
+    if sys.platform != "win32":
+        print("Automatic AMD NPU setup currently supports Windows only.")
+        return 2
+    script = Path(__file__).with_name("setup_amd_npu.ps1")
+    command = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)]
+    if args.installer:
+        command += ["-Installer", str(Path(args.installer).resolve())]
+    result = subprocess.run(command)
+    if result.returncode:
+        return result.returncode
+    from . import interp
+
+    interp.CACHE.unlink(missing_ok=True)
+    amd = [i for i in interp.probe_all(refresh=True) if "VitisAIExecutionProvider" in i.providers]
+    if not amd:
+        print("Installation finished but VitisAIExecutionProvider is unavailable. Restart the terminal after any required reboot, then retry setup-npu.")
+        return 1
+    print("AMD runtime detected. Run 'uv run fairbench verify' to check model execution.")
+    return cmd_devices(args)
+
+
 def cmd_setup_gpu(args: argparse.Namespace) -> int:
     """Create an isolated interpreter that has a GPU-capable ONNX Runtime.
 
@@ -503,6 +528,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_gpu.add_argument("--cuda", action="store_true", help="install onnxruntime-gpu + CUDA runtime instead of DirectML")
     p_gpu.add_argument("--force", action="store_true", help="rebuild an existing environment")
     p_gpu.set_defaults(func=cmd_setup_gpu)
+
+    p_npu = sub.add_parser("setup-npu", help="install AMD NPU driver and Ryzen AI Software on Windows")
+    p_npu.add_argument("--installer", help="previously downloaded official Ryzen AI installer (.exe)")
+    p_npu.set_defaults(func=cmd_setup_npu)
 
     p_info = sub.add_parser("info", help="show where this build lives and how it is running")
     p_info.set_defaults(func=cmd_info)

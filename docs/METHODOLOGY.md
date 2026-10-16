@@ -152,3 +152,23 @@ the difference between an accelerator that helps and one that merely exists.
 * It does not claim that a missing cell means a device is bad. It means the
   device was not measurable on that machine with the runtimes installed, and the
   report says so in words.
+
+## Comparable rankings and accelerator precision
+
+The relative AI index uses one CPU target as its baseline and the intersection
+of successful workloads across all targets with baseline-matched results.
+A device cannot improve its rank by failing its slowest workload. Excluded
+workloads remain visible in the per-workload results. Energy indices likewise
+use a common workload set among targets with energy measurements.
+
+OpenVINO GPU and NPU both receive an FP16 inference precision hint, including
+for FP32 input graphs. The input model precision and inference hint are recorded
+separately in session metadata. A hint does not certify every operator's actual
+precision; quantized models can use mixed precision. ORT/DirectML follows the
+input graph and its provider optimizations, so comparing it against OpenVINO
+also compares runtime policies. This is single-request, host-to-host latency
+(including transfers), not maximum asynchronous device throughput. GPU and NPU
+rankings may legitimately differ by model; no device is guaranteed to win.
+
+Results produced before this change retain their original scores and precision
+settings. Run a new suite to measure the updated GPU inference policy.

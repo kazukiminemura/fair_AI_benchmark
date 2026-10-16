@@ -122,6 +122,9 @@ class OpenVinoBackend(Backend):
             output_names=[o.get_any_name() for o in compiled.outputs],
             meta={
                 "execution_providers": [f"OpenVINO {target.device}"],
+                "input_graph_precision": built.precision,
+                "inference_precision_hint": "fp16" if target.kind in ("gpu", "npu") else "runtime_default",
+                "precision_note": "Hint is a compiler preference, not proof of every operator's execution precision.",
                 "requested_provider": f"OpenVINO:{target.device}",
                 "openvino_properties": {k: str(v) for k, v in props.items()},
                 "intra_op_threads": cfg.resolve_threads() if target.kind == "cpu" else None,
@@ -141,17 +144,11 @@ class OpenVinoBackend(Backend):
                 props[ov.properties.inference_num_threads()] = cfg.resolve_threads()
             except Exception:
                 pass
-        elif target.kind == "npu":
-            # NPUs run FP16 natively; INT8 comes from the quantised graph.
+        elif target.kind in ("gpu", "npu"):
+            # Both accelerators receive the same hint. Previously the GPU was
+            # forced to FP32 while the NPU used FP16 for the same FP32 graph.
             try:
                 props[ov.properties.hint.inference_precision()] = ov.Type.f16
-            except Exception:
-                pass
-        elif target.kind == "gpu":
-            try:
-                props[ov.properties.hint.inference_precision()] = (
-                    ov.Type.f16 if precision in ("fp16", "auto") else ov.Type.f32
-                )
             except Exception:
                 pass
         return props
