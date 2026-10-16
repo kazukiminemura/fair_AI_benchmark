@@ -289,39 +289,37 @@ function renderOverview() {
   if (rep) status.appendChild(el('a', { href: '#environment' }, '理由を見る →'));
 
   const rows = (rep?.results || []).filter((r) => r.ok);
-  const indices = (rep?.scores?.ai_index || []).filter((r) => Number.isFinite(r.ai_index) && r.ai_index > 0);
-  const baselineId = rep?.scores?.baseline?.target_id;
-  const maxIndex = Math.max(1, ...indices.filter((r) => r.kind !== 'cpu' || r.target_id === baselineId).map((r) => r.ai_index));
+  const validRates = rows.filter((r) => Number.isFinite(r.flops_per_s) && r.flops_per_s >= 0);
+  const maxRate = Math.max(0, ...validRates.map((r) => r.flops_per_s));
   const host = $('overviewDevices');
   host.replaceChildren();
   for (const [kind, name] of [['cpu', 'CPU'], ['gpu', 'GPU'], ['npu', 'NPU']]) {
     const measured = rows.filter((r) => r.kind === kind);
-    const candidates = indices.filter((r) => r.kind === kind).sort((a, b) => b.ai_index - a.ai_index);
-    const best = (kind === 'cpu' && candidates.find((r) => r.target_id === baselineId)) || candidates[0];
+    const best = validRates.filter((r) => r.kind === kind).sort((a, b) => b.flops_per_s - a.flops_per_s)[0];
     const card = el('article', { class: 'device-card' + (measured.length ? '' : ' unmeasured'), style: `--accent:${KIND_COLOR[kind]}` });
     const title = el('div', { class: 'device-card-heading' });
     title.append(el('h3', {}, name), el('span', {}, measured.length ? '計測済み' : '未計測'));
     card.appendChild(title);
-    card.appendChild(el('p', { class: 'device-role' }, { cpu: '基本の処理', gpu: '画像・並列処理', npu: 'AI専用の処理' }[kind]));
-    const value = el('div', { class: 'device-index' }, best ? fmt(best.ai_index) : measured.length ? '比較なし' : '未計測');
-    if (best) value.appendChild(el('small', {}, '倍'));
+    card.appendChild(el('p', { class: 'device-role' }, kind === 'npu' ? '最高実測TOPS' : '最高実測TFLOPS'));
+    const value = el('div', { class: 'device-index' }, best ? fmt(best.flops_per_s / 1e12, 3) : measured.length ? '値なし' : '未計測');
+    if (best) value.appendChild(el('small', {}, kind === 'npu' ? 'TOPS' : 'TFLOPS'));
     card.appendChild(value);
     const meter = el('div', { class: 'device-meter', 'aria-hidden': 'true' });
-    if (best) meter.appendChild(el('span', { style: `width:${100 * best.ai_index / maxIndex}%` }));
+    if (best && maxRate > 0) meter.appendChild(el('span', { style: `width:${100 * best.flops_per_s / maxRate}%` }));
     card.appendChild(meter);
-    const definition = best ? (best.target_id === baselineId ? '比較の基準となるCPUです' : 'CPUの基準値に対する総合倍率')
-      : measured.length ? 'CPUの比較基準がありません' : '今回の結果には含まれていません';
-    card.appendChild(el('p', { class: 'device-definition' }, definition));
+    card.appendChild(el('p', { class: 'device-definition' }, best
+      ? `${best.workload} · ${best.precision || '精度未記録'} · ${best.target_label || best.target_id}`
+      : measured.length ? '演算性能の数値が記録されていません' : '今回の結果には含まれていません'));
     const target = (rep?.targets || []).find((t) => t.id === best?.target_id);
-    card.appendChild(el('p', { class: 'device-path' }, best ? (target?.detail || best.label || best.target_id) : '機器の有無・設定は詳細で確認できます'));
+    card.appendChild(el('p', { class: 'device-path' }, best ? (target?.detail || best.target_label || best.target_id) : '機器の有無・設定は詳細で確認できます'));
     card.appendChild(el('a', { class: 'text-link', href: measured.length ? '#performance' : '#devices' },
-      best ? `${best.workloads}項目の測定データを見る →` : measured.length ? '測定値を見る →' : '対応状況を見る →'));
+      measured.length ? '測定データを見る →' : '対応状況を見る →'));
     host.appendChild(card);
   }
   const total = (rep?.results || []).length;
   $('overviewCoverage').textContent = rep
-    ? `${rows.length}/${total}件成功 · 所要 ${fmtDuration(rep.duration_s)}。CPUは基準値、GPU・NPUは最高倍率。同じテスト項目で比較してください。`
-    : '機器ごとの倍率と、計測結果の注意点をここで確認できます。';
+    ? `${rows.length}/${total}件成功 · 所要 ${fmtDuration(rep.duration_s)}。選択した結果内の最高実測値です。モデルの演算数からの換算値で、理論ピーク性能ではありません。同じモデル・精度・測定モードで比較してください。`
+    : 'CPU・GPUの最高TFLOPSと、NPUの最高TOPSをここで確認できます。';
 }
 
 const VIEWS = {
