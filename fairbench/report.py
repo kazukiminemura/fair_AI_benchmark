@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from pathlib import Path
@@ -10,6 +11,17 @@ from typing import Any
 
 RESULTS_DIR = Path("results")
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def json_safe(value: Any) -> Any:
+    """JSON has no NaN/Infinity; represent unavailable numbers as null."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    return value
 
 
 def default_name(prefix: str = "fairbench") -> str:
@@ -25,12 +37,18 @@ def save(report: dict[str, Any], path: str | Path | None = None) -> Path:
     if path.is_dir():
         path = path / default_name()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
+    path.write_text(json.dumps(json_safe(report), indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
     return path
 
 
 def load(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text())
+    path = Path(path)
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        # Older Windows builds wrote reports using the Japanese system codec.
+        text = path.read_text(encoding="cp932")
+    return json.loads(text, parse_constant=lambda _: None)
 
 
 def safe_name(name: str) -> str:
@@ -46,7 +64,7 @@ def list_results(directory: str | Path | None = None) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for path in sorted(directory.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
-            data = json.loads(path.read_text())
+            data = load(path)
         except Exception:
             continue
         if data.get("schema") != "fairbench.result/1":

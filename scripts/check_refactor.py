@@ -20,6 +20,45 @@ from fairbench.runner import _score, verify_targets
 from fairbench.system import PowerInfo, SystemFingerprint
 
 
+def check_report_json() -> None:
+    import threading
+    from http.server import ThreadingHTTPServer
+    from urllib.request import urlopen
+
+    from fairbench import report, server
+
+    def reject_constant(value):
+        raise AssertionError(f"Nonstandard JSON constant: {value}")
+    data = {"schema": "fairbench.result/1", "system": {"hostname": "日本語PC"},
+            "results": [], "cells": [{"error": float("nan"), "nested": [float("inf"), -float("inf")]}],
+            "literal": "NaN is text", "finite": 1.25}
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        legacy = root / "legacy.json"
+        legacy.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        with patch.object(report, "RESULTS_DIR", root):
+            saved = report.save(data, root / "new.json")
+            parsed = json.loads(saved.read_text(encoding="utf-8"), parse_constant=reject_constant)
+            assert parsed["cells"] == [{"error": None, "nested": [None, None]}]
+            assert parsed["literal"] == data["literal"] and parsed["finite"] == 1.25
+            assert report.load(legacy) == parsed
+            assert len(report.list_results()) == 2
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with urlopen(f"http://127.0.0.1:{httpd.server_port}/api/result/legacy.json") as response:
+                    body = json.loads(response.read().decode("utf-8"), parse_constant=reject_constant)
+                assert body == parsed
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+                thread.join()
+        legacy.write_text(json.dumps(data, ensure_ascii=False), encoding="cp932")
+        assert report.load(legacy) == parsed
+    print("Report JSON checks passed: strict JSON, legacy NaN/Infinity, Japanese encoding, actual result API.")
+
+
 def check_throughput() -> None:
     import threading
     import time
@@ -300,6 +339,7 @@ def check_directml_options() -> None:
 
 
 if __name__ == "__main__":
+    check_report_json()
     check_throughput()
     check_conda_launch()
     check_npu_setup()
