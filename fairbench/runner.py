@@ -323,6 +323,7 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "device": base.get("device"),
             "target_label": base.get("target_label"),
             "precision": base.get("precision") or precision_of(workload),
+            "session": base.get("session", {}),
             "repeats_requested": len(items),
             "repeats_ok": len(good),
         }
@@ -424,22 +425,39 @@ def _score(report: dict[str, Any]) -> dict[str, Any]:
     cpus = [r for r in rows if r.get("kind") == "cpu" and r.get("backend") == "ort"]
     if not cpus:
         cpus = [r for r in rows if r.get("kind") == "cpu"]
+    # One baseline interpreter: never mix CPU results from different runtimes.
+    baseline_id = cpus[0]["target_id"] if cpus else None
+    cpus = [r for r in cpus if r["target_id"] == baseline_id]
     baseline = {r["workload"]: r["units_per_s"] for r in cpus if r.get("units_per_s")}
     if not baseline:
         return {"baseline": None, "note": "no CPU baseline was measured; relative index unavailable"}
 
+    # A target that fails a difficult workload must not improve its rank by
+    # averaging only its successful, easier workloads.
+    coverage: dict[str, set[str]] = {}
+    for row in rows:
+        if row["workload"] in baseline and row.get("units_per_s"):
+            coverage.setdefault(row["target_id"], set()).add(row["workload"])
+    common = set.intersection(*coverage.values()) if coverage else set()
+    compared = [row for row in rows if row["workload"] in common]
+
+    energy_coverage: dict[str, set[str]] = {}
+    for row in compared:
+        if row.get("units_per_joule"):
+            energy_coverage.setdefault(row["target_id"], set()).add(row["workload"])
+    energy_common = set.intersection(*energy_coverage.values()) if energy_coverage else set()
     per_target: dict[str, list[float]] = {}
     per_target_w: dict[str, list[float]] = {}
-    for row in rows:
+    for row in compared:
         base = baseline.get(row["workload"])
         if base and row.get("units_per_s"):
             per_target.setdefault(row["target_id"], []).append(row["units_per_s"] / base)
-        if row.get("units_per_joule"):
+        if row["workload"] in energy_common and row.get("units_per_joule"):
             per_target_w.setdefault(row["target_id"], []).append(row["units_per_joule"])
 
     index = _rank_targets(rows, per_target, "ai_index")
     efficiency = _rank_targets(rows, per_target_w, "units_per_joule")
-    cpu_ai = next((i["ai_index"] for i in index if i["kind"] == "cpu"), None)
+    cpu_ai = next((i["ai_index"] for i in index if i["target_id"] == baseline_id), None)
 
     return {
         "baseline": {
@@ -448,6 +466,10 @@ def _score(report: dict[str, Any]) -> dict[str, Any]:
             "definition": "ONNX Runtime CPU EP on this machine",
             "workloads": len(baseline),
         },
+        "comparison_workloads": sorted(common),
+        "efficiency_workloads": sorted(energy_common),
+        "excluded_workloads": sorted(set(baseline) - common),
+        "note": "Indices use the same successfully measured workloads for every compared target; failures remain in results.",
         "ai_index": index,
         "efficiency": efficiency,
         "cpu_index": cpu_ai,

@@ -394,7 +394,15 @@ def _reason_for(slot: Slot, fp: system.SystemFingerprint) -> str:
         if slot.vendor == "intel":
             return "No Intel NPU present (requires Core Ultra with AI Boost), or its driver/OpenVINO NPU plugin is unavailable."
         if slot.vendor == "amd":
-            return "No AMD XDNA NPU present (requires Ryzen AI 300/7040+), or onnxruntime-vitisai is not installed."
+            adapter = fp.find_adapter("npu", "amd")
+            hardware = f"{adapter.name} is present, but" if adapter else "AMD NPU hardware/driver was not detected and"
+            return (
+                f"{hardware} no VitisAIExecutionProvider was found. "
+                "uv sync installs CPU/GPU runtimes only for AMD. Run 'uv run fairbench setup-npu' on Windows to install the driver and Ryzen AI Software, "
+                "activate its Conda environment and run AMD quicktest.py. "
+                "Conda environments are discovered automatically; alternatively set FAIRBENCH_PYTHON "
+                "to that environment's python.exe. Do not install generic onnxruntime wheels into the AMD environment."
+            )
         return "No NPU device found."
     if slot.kind == "gpu":
         a = fp.find_adapter("gpu", slot.vendor)
