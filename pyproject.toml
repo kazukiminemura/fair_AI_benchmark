@@ -21,28 +21,21 @@ classifiers = [
     "Topic :: System :: Benchmark",
 ]
 
-# Core: portable, works on any x86-64 or ARM64 machine, CPU only.
+# Select one ORT distribution per platform: these wheels share an import path.
 dependencies = [
     "numpy>=1.26",
     "onnx>=1.16",
-    "onnxruntime>=1.18",
+    "onnxruntime-directml>=1.18; sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "onnxruntime>=1.18; sys_platform != 'win32' or platform_machine != 'AMD64'",
+    "openvino>=2024.4; platform_machine == 'AMD64' or platform_machine == 'x86_64'",
 ]
 
 [project.optional-dependencies]
-# Intel CPU / iGPU / NPU through OpenVINO, including the NPU plugin.
-# Required for any Intel NPU number.
-openvino = ["openvino>=2024.4"]
-# Any DirectX 12 GPU on Windows (NVIDIA, AMD, Intel) with no CUDA install.
-# NOTE: every ONNX Runtime wheel installs into the same `onnxruntime` package,
-# so pick one per environment. fairbench will use a wheel that lives in another
-# interpreter - see `fairbench setup-gpu` and the FAIRBENCH_PYTHON variable.
-directml = ["onnxruntime-directml"]
-cuda = ["onnxruntime-gpu", "nvidia-cublas-cu12", "nvidia-cudnn-cu12"]
-qnn = ["onnxruntime-qnn"]
-# AMD Ryzen AI (XDNA) is deliberately NOT an extra: `onnxruntime-vitisai` is not
-# published on PyPI, it ships with AMD's Ryzen AI software. Install it into its
-# own virtual environment per AMD's instructions and point FAIRBENCH_PYTHON at
-# that environment - the interpreter registry will pick the NPU up.
+# Compatibility aliases; these runtimes are included on supported platforms.
+openvino = ["openvino>=2024.4; platform_machine == 'AMD64' or platform_machine == 'x86_64'"]
+directml = ["onnxruntime-directml>=1.18; sys_platform == 'win32' and platform_machine == 'AMD64'"]
+# CUDA and vendor NPU wheels belong in separate interpreters because they
+# overwrite the same onnxruntime package. Use setup-gpu --cuda / FAIRBENCH_PYTHON.
 
 [project.scripts]
 fairbench = "fairbench.cli:main"
@@ -62,10 +55,8 @@ dev = [
 
 [tool.uv]
 default-groups = ["dev"]
-# The packaged build must not drag in OpenVINO: it is ~1 GB of device plugins
-# and it is optional at runtime, so it stays an extra.
-#   uv sync                     -> core only  (CPU, plus any external GPU venv)
-#   uv sync --extra openvino    -> adds the Intel CPU/GPU/NPU plugin
+# Runtime packages follow OS/architecture markers; discovery queries installed
+# runtimes at execution time. Frozen builds explicitly exclude OpenVINO.
 
 # --------------------------------------------------------------------------
 [tool.setuptools.packages.find]

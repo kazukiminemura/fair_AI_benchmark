@@ -12,12 +12,29 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from fairbench import cli, worker_process
+from fairbench import cli, interp, worker_process
 from fairbench.backends.ort_backend import OrtBackend
 from fairbench.config import RunConfig
 from fairbench.devices import Target
 from fairbench.runner import _score, verify_targets
 from fairbench.system import PowerInfo, SystemFingerprint
+
+
+def check_runtime_refresh() -> None:
+    path = sys.executable
+    stale = interp.Interpreter(path, primary=True, available=True, providers=["CPUExecutionProvider"])
+    current = interp.Interpreter(path, primary=True, available=True,
+                                 providers=["CPUExecutionProvider", "DmlExecutionProvider"])
+    cache = {path.lower(): {"signature": interp._signature(path), "result": stale.to_dict()}}
+    with (
+        patch.object(interp, "candidates", return_value=[path]),
+        patch.object(interp, "_load_cache", return_value=cache),
+        patch.object(interp, "_save_cache"),
+        patch.object(interp, "probe", return_value=current) as probe,
+    ):
+        assert "DmlExecutionProvider" in interp.probe_all()[0].providers
+        probe.assert_called_once_with(path)
+    print("Runtime refresh passed: new providers are detected after uv sync.")
 
 
 def check_worker_failures() -> None:
@@ -150,6 +167,7 @@ def check_directml_options() -> None:
 
 
 if __name__ == "__main__":
+    check_runtime_refresh()
     check_worker_failures()
     check_scores()
     check_cpu_worker()

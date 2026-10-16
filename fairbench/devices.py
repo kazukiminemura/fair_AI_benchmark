@@ -225,7 +225,13 @@ def _ort_targets(fp: system.SystemFingerprint) -> tuple[list[Target], str, list[
     ]
     for ep, pkg, what in missing:
         if ep not in total_providers:
-            notes.append(f"{ep} unavailable -> {what}. Install with: pip install {pkg.split(' ')[0]}")
+            setup = "Use 'fairbench setup-gpu --cuda' for an isolated CUDA environment." if ep in (
+                "CUDAExecutionProvider", "TensorrtExecutionProvider"
+            ) else (
+                "Run 'uv sync' on a supported platform, or use a separate runtime via FAIRBENCH_PYTHON "
+                f"({pkg.split(' ')[0]})."
+            )
+            notes.append(f"{ep} unavailable -> {what}. {setup}")
 
     if any(t.vendor == "nvidia" and t.kind == "gpu" for t in targets) is False and fp.find_adapter("gpu", "nvidia"):
         notes.append(
