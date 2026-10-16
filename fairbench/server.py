@@ -21,7 +21,7 @@ from . import __version__, paths, system
 from . import report as report_mod
 from .config import RunConfig
 from .devices import discover
-from .runner import WORKLOAD_META, resolve_workloads, run_suite
+from .runner import WORKLOAD_META, WORKLOAD_SETS, resolve_workloads, run_suite
 
 WEB_ROOT = paths.resource_dir()
 
@@ -86,6 +86,7 @@ def _catalog(force: bool = False) -> dict[str, Any]:
             "workloads": [
                 {"key": k, **v} for k, v in WORKLOAD_META.items()
             ],
+            "workload_sets": WORKLOAD_SETS,
             "defaults": {
                 "repeats": 3,
                 "min_seconds": 4.0,
@@ -118,6 +119,8 @@ def _run_thread(options: dict[str, Any]) -> None:
     try:
         quick = bool(options.get("quick"))
         cfg = RunConfig(
+            backend=str(options.get("backend", "all")),
+            suite=str(options.get("suite", "custom" if options.get("workloads") else "standard")),
             mode=str(options.get("mode", "latency")),
             requests=int(options.get("requests", 0)),
             warmup=2 if quick else 5,

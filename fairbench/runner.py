@@ -45,6 +45,14 @@ DEFAULT_WORKLOADS = [
     "llm_prefill",
 ]
 
+WORKLOAD_SETS = {
+    "standard": {"label": "標準（全モデル）", "workloads": DEFAULT_WORKLOADS},
+    "compute": {"label": "行列計算", "workloads": ["dense_gemm"]},
+    "vision": {"label": "画像処理", "workloads": ["conv_vision", "depthwise_mobile"]},
+    "nlp": {"label": "Transformer", "workloads": ["transformer"]},
+    "llm": {"label": "LLM（prefill・decode）", "workloads": ["llm_prefill", "llm_decode"]},
+}
+
 WORKLOAD_META: dict[str, dict[str, str]] = {
     "dense_gemm": {"category": "dense", "blurb": "Wide MLP; pure matrix throughput. The NPU's home turf."},
     "conv_vision": {"category": "vision", "blurb": "Convolutional backbone; classic image inference."},
@@ -59,7 +67,13 @@ WORKLOAD_META: dict[str, dict[str, str]] = {
 
 
 def resolve_workloads(cfg: RunConfig, requested: list[str] | None = None) -> list[str]:
-    names = requested or cfg.workloads or list(DEFAULT_WORKLOADS)
+    if cfg.suite not in WORKLOAD_SETS and cfg.suite != "custom":
+        raise ValueError(f"unknown measurement set '{cfg.suite}'")
+    names = requested or cfg.workloads
+    if not names:
+        if cfg.suite == "custom":
+            raise ValueError("custom measurement set requires at least one workload")
+        names = list(WORKLOAD_SETS[cfg.suite]["workloads"])
     if "all" in names:
         names = list(models.BASE_BUILDERS)
     out: list[str] = []
@@ -136,6 +150,19 @@ def _slug(text: str) -> str:
 # --------------------------------------------------------------------------
 # the suite
 # --------------------------------------------------------------------------
+def select_targets(all_targets: list[Target], backend: str = "all", target_ids: list[str] | None = None) -> list[Target]:
+    targets = [target for target in all_targets if backend == "all" or target.backend == backend]
+    if backend != "all" and not targets:
+        raise ValueError(f"No available targets for backend '{backend}'. Run fairbench devices to check installed runtimes.")
+    if target_ids:
+        wanted = set(target_ids)
+        targets = [t for t in targets if t.id in wanted or t.device in wanted or t.backend in wanted]
+        missing = wanted - {t.id for t in targets} - {t.device for t in targets} - {t.backend for t in targets}
+        if missing:
+            raise ValueError(f"Unknown or unavailable targets for selected backend: {sorted(missing)}")
+    return targets
+
+
 def run_suite(
     cfg: RunConfig,
     target_ids: list[str] | None = None,
@@ -153,15 +180,7 @@ def run_suite(
     cfg.logical_cores = fp.cpu.logical_cores
 
     disc = discovery or discover(fp)
-    all_targets = disc.available()
-    if target_ids:
-        wanted = set(target_ids)
-        targets = [t for t in all_targets if t.id in wanted or t.device in wanted or t.backend in wanted]
-        missing = wanted - {t.id for t in targets} - {t.device for t in targets} - {t.backend for t in targets}
-        if missing:
-            raise SystemExit(f"unknown or unavailable target(s): {sorted(missing)}")
-    else:
-        targets = all_targets
+    targets = select_targets(disc.available(), cfg.backend, target_ids)
 
     workload_names = resolve_workloads(cfg, workloads)
 
