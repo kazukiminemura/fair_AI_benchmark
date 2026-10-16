@@ -10,7 +10,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fairbench import cli, interp, worker_process
 from fairbench.backends.ort_backend import OrtBackend
@@ -18,6 +18,45 @@ from fairbench.config import RunConfig
 from fairbench.devices import Target
 from fairbench.runner import _score, verify_targets
 from fairbench.system import PowerInfo, SystemFingerprint
+
+
+def check_windowsml_selection() -> None:
+    from types import SimpleNamespace
+
+    from fairbench import windowsml
+    from fairbench.backends.base import BackendError
+    from fairbench.backends.windowsml_backend import WindowsMLBackend
+
+    def device(kind):
+        return SimpleNamespace(ep_name="OpenVINOExecutionProvider", ep_options={}, ep_metadata={},
+                               device=SimpleNamespace(type=SimpleNamespace(name=kind), vendor_id=0x8086,
+                                                      device_id=1, vendor="Intel", metadata={"Description": kind}))
+    gpu, npu = device("GPU"), device("NPU")
+    assert windowsml.device_info(gpu)["key"] != windowsml.device_info(npu)["key"]
+    backend = object.__new__(WindowsMLBackend)
+    options = MagicMock()
+    session = MagicMock()
+    session.get_providers.return_value = ["OpenVINOExecutionProvider"]
+    session.get_outputs.return_value = [SimpleNamespace(name="output")]
+    factory = MagicMock(return_value=session)
+    backend.ort = SimpleNamespace(get_ep_devices=lambda: [gpu, npu], InferenceSession=factory)
+    target = Target("winml-test", "winml", "OpenVINOExecutionProvider", "npu", "intel", "NPU",
+                    options={"winml_key": windowsml.device_info(npu)["key"]})
+    built = SimpleNamespace(serialise=lambda: b"model", key="smoke")
+    with patch.object(backend, "_session_options", return_value=options):
+        compiled = backend.compile(built, target, RunConfig(), "fp32")
+        options.add_provider_for_devices.assert_called_once_with([npu], {})
+        options.add_session_config_entry.assert_called_with("session.disable_cpu_ep_fallback", "1")
+        assert factory.call_args.kwargs["enable_fallback"] is False
+        assert compiled.meta["windowsml_device"]["kind"] == "npu"
+        session.get_providers.return_value = ["CPUExecutionProvider"]
+        try:
+            backend.compile(built, target, RunConfig(), "fp32")
+        except BackendError:
+            pass
+        else:
+            raise AssertionError("CPU fallback was reported as NPU execution")
+    print("Windows ML checks passed: explicit GPU/NPU distinction, strict CPU fallback rejection.")
 
 
 def check_report_json() -> None:
@@ -339,6 +378,7 @@ def check_directml_options() -> None:
 
 
 if __name__ == "__main__":
+    check_windowsml_selection()
     check_report_json()
     check_throughput()
     check_conda_launch()

@@ -156,8 +156,8 @@ def run_suite(
     all_targets = disc.available()
     if target_ids:
         wanted = set(target_ids)
-        targets = [t for t in all_targets if t.id in wanted or t.device in wanted]
-        missing = wanted - {t.id for t in targets} - {t.device for t in targets}
+        targets = [t for t in all_targets if t.id in wanted or t.device in wanted or t.backend in wanted]
+        missing = wanted - {t.id for t in targets} - {t.device for t in targets} - {t.backend for t in targets}
         if missing:
             raise SystemExit(f"unknown or unavailable target(s): {sorted(missing)}")
     else:

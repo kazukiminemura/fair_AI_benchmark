@@ -217,7 +217,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     cfg = RunConfig(repeats=1, measure_power=False, physical_cores=system.collect().cpu.physical_cores)
     fp = system.collect()
     disc = discover(fp)
-    targets = [t for t in disc.available() if not args.targets or t.id in args.targets]
+    targets = [t for t in disc.available() if not args.targets or t.id in args.targets or t.backend in args.targets]
     banner()
     print(f"{c('VERIFYING', BOLD)} {len(targets)} target(s)\n")
     verdicts = verify_targets(targets, cfg, _print_progress)
@@ -264,6 +264,38 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+def cmd_setup_winml(args: argparse.Namespace) -> int:
+    import shutil
+    import subprocess
+
+    from . import interp, worker_process
+
+    if sys.platform != "win32" or sys.getwindowsversion().build < 26100:
+        print("Windows ML EP Catalog requires Windows 11 24H2 (build 26100) or newer.")
+        return 2
+    uv = shutil.which("uv")
+    if not uv:
+        print("Install uv first, then retry setup-winml.")
+        return 2
+    target = paths.work_root() / ".venv-winml"
+    python = target / "Scripts" / "python.exe"
+    if not python.exists():
+        result = subprocess.run([uv, "venv", "--python", "3.12", str(target)])
+        if result.returncode:
+            return result.returncode
+    result = subprocess.run([uv, "pip", "install", "--python", str(python),
+                             "windowsml[with-ort]==2.4.89", "onnx>=1.16"])
+    if result.returncode:
+        return result.returncode
+    result = subprocess.run([str(python), "-m", "fairbench.windowsml", "--setup"],
+                            env=worker_process._worker_env())
+    interp.CACHE.unlink(missing_ok=True)
+    if result.returncode:
+        return result.returncode
+    print("Windows ML providers prepared. Run 'uv run fairbench verify --targets winml' before measurement.")
+    return 0
+
+
 def cmd_setup_npu(args: argparse.Namespace) -> int:
     """Run the Windows AMD installer workflow outside uv's Python environment."""
     import subprocess
@@ -540,6 +572,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_gpu.add_argument("--cuda", action="store_true", help="install onnxruntime-gpu + CUDA runtime instead of DirectML")
     p_gpu.add_argument("--force", action="store_true", help="rebuild an existing environment")
     p_gpu.set_defaults(func=cmd_setup_gpu)
+
+    p_winml = sub.add_parser("setup-winml", help="prepare Windows ML and download compatible certified EPs")
+    p_winml.set_defaults(func=cmd_setup_winml)
 
     p_npu = sub.add_parser("setup-npu", help="install AMD NPU driver and Ryzen AI Software on Windows")
     p_npu.add_argument("--check", action="store_true", help="refresh AMD runtime diagnostics without installing anything")

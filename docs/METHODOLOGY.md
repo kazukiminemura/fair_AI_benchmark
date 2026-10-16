@@ -197,3 +197,22 @@ are recorded rather than silently counted as successful inference.
 This bounded search measures an observed maximum, not an exhaustive maximum.
 Compare machines using the same mode, search range, time budget and model set.
 Default latency mode and previously saved results retain their original meaning.
+
+## Windows ML devices
+
+`setup-winml` installs a matched Microsoft windowsml / onnxruntime-windowsml
+pair into `.venv-winml` and prepares certified execution providers through the
+Windows ML EP Catalog. Discovery and benchmark workers register the installed
+provider libraries separately in each process. Normal discovery does not
+initiate downloads. Windows ML environments are re-probed so catalog updates
+cannot leave a stale device list in the interpreter cache.
+
+Each target binds one enumerated EP device with `add_provider_for_devices`,
+including its hardware type, vendor/device IDs and device metadata. OpenVINO's
+AUTO provider is excluded so an NPU target cannot select another device through
+AUTO. GPU/NPU sessions disable ORT CPU-EP fallback and Python's automatic provider
+fallback. A graph requiring ORT CPU nodes fails rather than being reported as
+an accelerator measurement. Provider-internal mixed execution remains governed
+by that provider; this does not constitute a per-operator hardware trace.
+Selected device and EP metadata, ORT version and Windows ML package version are
+recorded. Latency and throughput reuse the existing measurement policies.

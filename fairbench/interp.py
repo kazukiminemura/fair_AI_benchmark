@@ -44,11 +44,18 @@ PROBE_SOURCE = (
     "except Exception as e:\n"
     " p['onnxruntime']=None;p['providers']=[]\n"
     " p['error']=type(e).__name__+': '+str(e)\n"
+    "try:\n"
+    " import importlib.util\n"
+    " if importlib.util.find_spec('windowsml') is not None:\n"
+    "  from fairbench.windowsml import probe\n"
+    "  p.update(probe())\n"
+    "except Exception as e:\n"
+    " p['winml_notes']=[str(e)]\n"
     "sys.stdout.write(" + repr(MARKER) + "+json.dumps(p))\n"
 )
 
 # Names we look for automatically, in priority order.
-VENV_NAMES = (".venv-gpu", ".venv-dml", ".venv-cuda", ".venv-ryzenai", ".venv")
+VENV_NAMES = (".venv-winml", ".venv-gpu", ".venv-dml", ".venv-cuda", ".venv-ryzenai", ".venv")
 
 
 @dataclass
@@ -63,6 +70,9 @@ class Interpreter:
     error: str | None = None
     primary: bool = False
     bundled: bool = False
+    winml_devices: list[dict] = field(default_factory=list)
+    winml_notes: list[str] = field(default_factory=list)
+    winml_version: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -83,6 +93,16 @@ def payload() -> dict[str, Any]:
         info["onnxruntime"] = None
         info["providers"] = []
         info["error"] = f"{type(exc).__name__}: {exc}"
+    if sys.platform == "win32":
+        import importlib.util
+
+        if importlib.util.find_spec("windowsml") is not None:
+            try:
+                from .windowsml import probe
+
+                info.update(probe())
+            except Exception as exc:
+                info["winml_notes"] = [str(exc)]
     return info
 
 
@@ -231,6 +251,9 @@ def probe(interpreter: str, timeout: float = 120.0) -> Interpreter:
         info.providers = data.get("providers") or []
         info.platform = data.get("platform")
         info.error = data.get("error")
+        info.winml_devices = data.get("winml_devices", [])
+        info.winml_notes = data.get("winml_notes", [])
+        info.winml_version = data.get("winml_version", "")
         return info
 
     if not Path(interpreter).exists():
@@ -262,6 +285,9 @@ def probe(interpreter: str, timeout: float = 120.0) -> Interpreter:
     info.providers = data.get("providers") or []
     info.platform = data.get("platform")
     info.error = data.get("error")
+    info.winml_devices = data.get("winml_devices", [])
+    info.winml_notes = data.get("winml_notes", [])
+    info.winml_version = data.get("winml_version", "")
     return info
 
 
@@ -276,7 +302,7 @@ def probe_all(refresh: bool = False) -> list[Interpreter]:
         entry = cache.get(key)
         # The executable does not change when uv sync replaces runtime wheels.
         # Always read the current environment so an old CPU-only cache cannot hide GPUs.
-        if not refresh and not paths.is_own_interpreter(path) and entry and entry.get("signature") == sig and entry.get("result") and not entry["result"].get("error"):
+        if not refresh and not paths.is_own_interpreter(path) and entry and entry.get("signature") == sig and entry.get("result") and not entry["result"].get("error") and not entry["result"].get("winml_version"):
             info = Interpreter(**entry["result"])
         else:
             info = probe(path)
