@@ -15,9 +15,36 @@ from unittest.mock import MagicMock, patch
 from fairbench import cli, interp, worker_process
 from fairbench.backends.ort_backend import OrtBackend
 from fairbench.config import RunConfig
-from fairbench.devices import Target
+from fairbench.devices import Discovery, Target
 from fairbench.runner import _score, verify_targets
 from fairbench.system import PowerInfo, SystemFingerprint
+
+
+def check_compute_units() -> None:
+    from fairbench.report import format_compute_rate
+
+    for kind in ("cpu", "gpu"):
+        assert format_compute_rate({"kind": kind, "flops_per_s": 2e12}) == "2000.0 GFLOPS"
+    assert format_compute_rate({"kind": "npu", "flops_per_s": 2e12}) == "2.000 TOPS"
+    assert format_compute_rate({"kind": "npu", "flops_per_s": 0}) == "0.000 TOPS"
+    assert format_compute_rate({"kind": "npu", "flops_per_s": float("nan")}) == "—"
+    assert format_compute_rate({"kind": "cpu"}) == "—"
+    print("Compute units passed: CPU/GPU GFLOPS, NPU TOPS, zero/missing values.")
+
+
+def check_windowsml_npu_requirement() -> None:
+    from fairbench import windowsml
+
+    data = {"winml_version": "test", "winml_notes": [], "winml_devices": [
+        {"provider": "VitisAIExecutionProvider", "kind": "gpu", "description": "GPU"}
+    ]}
+    with patch("sys.argv", ["winml", "--setup", "--provider", "VitisAIExecutionProvider", "--require-npu"]), \
+            patch.object(windowsml, "probe", return_value=data) as probe, redirect_stdout(StringIO()):
+        assert windowsml.main() == 1
+        data["winml_devices"][0]["kind"] = "npu"
+        assert windowsml.main() == 0
+        assert probe.call_args.kwargs == {"download": True, "provider_name": "VitisAIExecutionProvider"}
+    print("Windows ML NPU requirement passed: GPU-only installation cannot report success.")
 
 
 def check_windowsml_selection() -> None:
@@ -187,7 +214,29 @@ def check_npu_setup() -> None:
         command = run.call_args.args[0]
         assert command[-2:] == ["-Installer", str(Path("sdk.exe").resolve())]
         assert Path(command[command.index("-File") + 1]).is_file()
-    print("NPU setup checks passed: platform guard, installer path, failure propagation.")
+    from types import SimpleNamespace
+
+    default = cli.build_parser().parse_args(["setup-npu"])
+    npu = Target("amd-npu", "winml", "VitisAIExecutionProvider", "npu", "amd", "AMD NPU")
+    with (
+        patch.object(cli.sys, "platform", "win32"),
+        patch.object(cli.system, "collect", return_value=SimpleNamespace(cpu=SimpleNamespace(vendor="amd"))),
+        patch.object(cli, "cmd_setup_winml", return_value=0) as setup,
+        patch.object(interp, "CACHE", MagicMock()),
+        patch.object(interp, "probe_all", return_value=[]),
+        patch.object(cli, "discover", return_value=Discovery(targets=[npu])) as discovery,
+        patch.object(cli, "verify_targets", return_value={npu.id: {"ok": True}}) as verify,
+    ):
+        assert default.func(default) == 0
+        assert setup.call_args.args[0].provider == "VitisAIExecutionProvider"
+        assert setup.call_args.args[0].require_npu is True
+        assert verify.call_args.args[0] == [npu]
+        discovery.return_value = Discovery(targets=[])
+        assert default.func(default) == 1  # An installed GPU does not complete NPU setup.
+        discovery.return_value = Discovery(targets=[npu])
+        verify.return_value = {npu.id: {"ok": False, "error": "compile failed"}}
+        assert default.func(default) == 1
+    print("NPU setup checks passed: default Vitis AI acquisition, device and inference gates, legacy installer.")
 
 
 def check_conda_discovery() -> None:
@@ -378,6 +427,8 @@ def check_directml_options() -> None:
 
 
 if __name__ == "__main__":
+    check_compute_units()
+    check_windowsml_npu_requirement()
     check_windowsml_selection()
     check_report_json()
     check_throughput()

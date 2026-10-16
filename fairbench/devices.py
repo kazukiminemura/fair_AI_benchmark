@@ -423,8 +423,8 @@ def _reason_for(slot: Slot, fp: system.SystemFingerprint) -> str:
             hardware = f"{adapter.name} is present, but" if adapter else "AMD NPU hardware/driver was not detected and"
             return (
                 f"{hardware} no VitisAIExecutionProvider was found. "
-                "uv sync installs CPU/GPU runtimes only for AMD. Run 'uv run fairbench setup-npu' on Windows to install the driver and Ryzen AI Software, "
-                "activate its Conda environment and run AMD quicktest.py. "
+                "Run 'uv run fairbench setup-npu' to acquire Vitis AI through Windows ML and verify the AMD NPU. "
+                "Windows 11 24H2+ and a compatible AMD NPU driver are required. "
                 "Conda environments are discovered automatically; alternatively set FAIRBENCH_PYTHON "
                 "to that environment's python.exe. Do not install generic onnxruntime wheels into the AMD environment."
             )
