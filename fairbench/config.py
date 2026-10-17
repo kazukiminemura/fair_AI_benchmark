@@ -23,6 +23,9 @@ class RunConfig:
     # ---- measurement policy ----------------------------------------------
     mode: str = "latency"  # latency | throughput
     requests: int = 0  # throughput: 0 sweeps 1/2/4/8; otherwise fixed concurrency
+    gemm_size: int = 0
+    peak_max_size: int = 4096
+    resident_io: bool = False
     warmup: int = 5
     min_iterations: int = 15
     max_iterations: int = 20000
@@ -56,13 +59,17 @@ class RunConfig:
     def __post_init__(self) -> None:
         if self.backend not in ("all", "ort", "openvino", "winml"):
             raise ValueError("backend must be all, ort, openvino or winml")
-        if self.mode not in ("latency", "throughput"):
-            raise ValueError("mode must be latency or throughput")
+        if self.mode not in ("latency", "throughput", "peak"):
+            raise ValueError("mode must be latency, throughput or peak")
+        if self.gemm_size not in (0, 512, 1024, 2048, 4096) or self.peak_max_size not in (1024, 2048, 4096):
+            raise ValueError("invalid GEMM search size")
         if not isinstance(self.requests, int) or not 0 <= self.requests <= 32:
             raise ValueError("requests must be an integer between 0 (auto) and 32")
         if self.suite == "npu_peak":
             self.mode = "throughput"
             self.include_int8 = True
+        if self.suite == "peak":
+            self.mode = "peak"
 
     def resolve_threads(self) -> int:
         if self.threads and self.threads > 0:

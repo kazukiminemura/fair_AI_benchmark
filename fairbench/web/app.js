@@ -64,22 +64,37 @@ function renderPrecisionRates(card, rows, kind) {
     if (best) value.appendChild(el('small', {}, unit));
     card.appendChild(value);
     card.appendChild(el('p', { class: 'device-definition', title: failed?.error || '' }, best
-      ? `モデル ${precision.toUpperCase()} / 実行 ${formatExecutionPrecision(best)} · ${best.target_label || best.target_id} · ${best.repeats_ok || 0}回`
+      ? `モデル ${precision.toUpperCase()} / ${(best.gpu_precision || best.session?.gpu_precision)?.available ? '演算入力' : '実行'} ${formatExecutionPrecision(best)} · ${best.target_label || best.target_id} · ${best.repeats_ok || 0}回`
       : failed ? `${precision.toUpperCase()}: ${failureReason}` : `${precision.toUpperCase()}の測定値がありません`));
+    if (best?.peak_settings) {
+      const settings = best.peak_settings;
+      const scope = best.measurement_scope === 'device_resident' ? 'GPU常駐（入出力転送を除外）'
+        : best.measurement_scope === 'persistent_requests' ? '固定バッファ・リクエスト（ランタイム内部転送は含む）' : '転送込み';
+      card.appendChild(el('p', { class: 'device-path' }, `探索${best.peak_candidate_count}候補 → 行列 ${settings.gemm_size}×${settings.gemm_size}・${settings.requests}並列・${settings.threads}スレッド枠 / ${scope}`));
+    }
     if (best && kind === 'gpu') {
+      const precisionProbe = best.gpu_precision || best.session?.gpu_precision;
+      if (!precisionProbe?.available && !(best.compute_precisions || best.session?.compute_precisions || []).length) {
+        card.appendChild(el('p', { class: 'device-path', title: precisionProbe?.reason || '' },
+          precisionProbe ? 'GPUの演算入力型を確認できませんでした。測定データの取得理由を確認してください。'
+            : 'この保存結果にはGPU精度の調査情報がありません。再計測すると取得します。'));
+      }
       const timing = best.timing_breakdown || {};
       card.appendChild(el('p', { class: 'device-path', title: timing.note || '' }, timing.available
-        ? `入力転送 ${fmt(timing.h2d_ms, 3)} ms / GPU常駐推論（同期込）${fmt(timing.compute_ms, 3)} ms / 出力転送 ${fmt(timing.d2h_ms, 3)} ms · ${timing.repeats_measured}回の中央値`
+        ? `分離時間（別測定）: 入力転送 ${fmt(timing.h2d_ms, 3)} ms / GPU常駐推論（同期込）${fmt(timing.compute_ms, 3)} ms / 出力転送 ${fmt(timing.d2h_ms, 3)} ms · ${timing.repeats_measured}回の中央値`
         : '転送・計算の分離時間は未取得'));
     }
   }
 }
 function formatExecutionPrecision(row) {
-  const values = row.compute_precisions || row.session?.compute_precisions || [];
+  const gpu = row.gpu_precision || row.session?.gpu_precision;
+  const gpuAssigned = gpu?.available && gpu.tensor_precisions?.length;
+  const values = gpuAssigned ? gpu.tensor_precisions : row.compute_precisions || row.session?.compute_precisions || [];
   if (!values.length) return '未確認';
   const names = { f32: 'FP32', float: 'FP32', float32: 'FP32', f16: 'FP16', float16: 'FP16',
     i8: 'INT8', int8: 'INT8', u8: 'UINT8', uint8: 'UINT8', i32: 'INT32', int32: 'INT32' };
   const text = [...new Set(values.map((value) => names[value.toLowerCase()] || value.toUpperCase()))].sort().join('/');
+  if (gpuAssigned) return `${text}（GPU割当グラフ型・内部演算/蓄積は未確認）`;
   return text + (row.compute_precision_complete === false ? '（一部未確認）' : '（ランタイム報告）');
 }
 function gradeChecks(report) {
@@ -358,6 +373,9 @@ function renderOverview() {
   $('overviewCoverage').textContent = rep
     ? `${rows.length}/${total}件成功 · 所要 ${fmtDuration(rep.duration_s)}。モデル精度ごとの最高実測値です。モデルの演算数からの換算値で、理論ピーク性能ではありません。FP16はランタイムによるエミュレーションを含む場合があります。同じモデル・精度・測定モードで比較してください。精度別負荷は「精度別性能」または標準計測で実行できます。`
     : 'CPU・GPU・NPUそれぞれでFP16（TFLOPS）とINT8（TOPS）を計測します。対応しない精度は実行不可の理由を表示します。';
+  if (rep?.config?.mode === 'peak') {
+    $('overviewCoverage').textContent += ' 最大探索ではデバイスごとにサイズ・並列数・測定範囲が異なります。探索内の最良条件を固定した確認測定の中央値で、理論ピークや絶対最大値ではありません。';
+  }
 }
 
 const VIEWS = {
@@ -393,7 +411,7 @@ function renderHero(rep) {
     sys.memory ? `${sys.memory.total_gib} GiB` : null,
     rep.config ? `threads=${rep.config.threads || rep.config.physical_cores || 'auto'}` : null,
     rep.config ? `${rep.config.repeats} repeats` : null,
-    rep.config?.mode === 'throughput' ? '最大スループット（並列実行）' : '単発の遅延',
+    rep.config?.mode === 'peak' ? '最大スループット（デバイス別探索）' : rep.config?.mode === 'throughput' ? '固定負荷の並列測定' : '単発の遅延',
   ].filter(Boolean).forEach((t) => {
     const s = el('span', {}, t);
     meta.appendChild(s);
@@ -649,7 +667,7 @@ function renderRadar(rep) {
 function renderTable(rep) {
   const table = $('resultTable');
   const rows = (rep.results || []).slice().sort((a, b) => (a.workload.localeCompare(b.workload)) || ((b.units_per_s || 0) - (a.units_per_s || 0)));
-  const cols = ['device', 'workload', 'モデル精度', '実行精度', 'units/s', 'median ms', 'p90 ms', 'CV', '演算性能（全体）', '入力転送 ms', 'GPU常駐推論・同期 ms', '出力転送 ms', '成功回数', 'host CPU s/inf', 'W', 'J/inf', 'compile ms', 'spread'];
+  const cols = ['device', 'workload', 'モデル精度', '演算精度・入力型', 'units/s', 'median ms', 'p90 ms', 'CV', '演算性能（測定範囲内）', '入力転送 ms', 'GPU常駐推論・同期 ms', '出力転送 ms', '成功回数', 'host CPU s/inf', 'W', 'J/inf', 'compile ms', 'spread'];
   table.innerHTML = '';
   const thead = el('thead');
   const tr = el('tr');
@@ -744,7 +762,7 @@ function renderProvenance(rep) {
     ['backend', cfg.backend || 'all'],
     ['measurement set', cfg.suite || 'standard'],
     ['mode', cfg.mode || 'latency'],
-    ['parallel requests', cfg.mode === 'throughput' ? (cfg.requests || 'auto: 1/2/4/8（NPUは16/32も探索）') : 1],
+    ['parallel requests', cfg.mode === 'latency' ? 1 : (cfg.requests || 'auto; 採用条件は各測定結果に記録')],
     ['repeats', cfg.repeats],
     ['cooldown', cfg.cooldown_seconds + 's'],
     ['cpu threads', cfg.threads || cfg.physical_cores],
@@ -811,6 +829,9 @@ function renderLive() {
     if (e.event === 'verify') {
       cls = e.ok ? 'ok' : 'fail';
       txt = `verify ${e.target} — ${e.ok ? 'ok' : String(e.error || '').split('\n')[0]}`;
+    } else if (e.event === 'tuning') {
+      cls = e.ok ? 'ok' : 'fail';
+      txt = `探索 ${e.target} · ${e.workload} · 行列 ${e.size}×${e.size} / ${e.requests}並列 / ${e.threads}スレッド枠 · ${fmt((e.flops_per_s || 0) / 1e12, 3)} T-op/s`;
     } else if (e.event === 'cell') {
       cls = e.ok ? 'ok' : 'fail';
       txt = e.ok
@@ -871,14 +892,16 @@ function buildRunModal() {
     suiteSelect.appendChild(el('option', { value: key }, suite.label));
   });
   suiteSelect.appendChild(el('option', { value: 'custom' }, '個別指定'));
-  suiteSelect.value = 'standard';
-  $('optMode').disabled = false;
+  suiteSelect.value = cat.workload_sets?.peak ? 'peak' : 'standard';
+  $('optMode').value = suiteSelect.value === 'peak' ? 'peak' : 'latency';
+  $('optMode').disabled = suiteSelect.value === 'peak';
   $('optInt8').disabled = false;
   suiteSelect.addEventListener('change', () => {
     const suite = cat.workload_sets?.[suiteSelect.value];
-    $('optMode').disabled = suiteSelect.value === 'npu_peak';
+    $('optMode').disabled = ['npu_peak', 'peak'].includes(suiteSelect.value);
     $('optInt8').disabled = suiteSelect.value === 'npu_peak';
     if (!suite) return;
+    $('optMode').value = suiteSelect.value === 'peak' ? 'peak' : 'latency';
     if (suiteSelect.value === 'npu_peak') {
       $('optMode').value = 'throughput';
       $('optRequests').value = '0';

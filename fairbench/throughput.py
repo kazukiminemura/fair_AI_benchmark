@@ -7,6 +7,8 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
+import numpy as np
+
 from .config import RunConfig
 
 
@@ -69,13 +71,22 @@ def _process_lane(connection, job, cfg, count, issued, start, stop):
         target = Target(**job["target"])
         backend = get_backend(target.backend)
         lane_cfg = replace(cfg, threads=max(1, cfg.resolve_threads() // count))
-        built = build_one(job["workload"])
+        built = build_one(job["workload"], cfg.gemm_size)
         model = backend.compile(built, target, lane_cfg, job.get("precision", "fp32"))
         if model.meta.get("fallback_used"):
             raise RuntimeError("Requested accelerator fell back to another provider")
         feed = built.make_inputs(cfg.input_seed)
+        def run():
+            return backend.run(model, feed)
+        if cfg.resident_io:
+            run, read_outputs = backend.prepare_resident(model, feed, target)
+            expected = backend.run(model, feed)
+            run()
+            for actual, reference in zip(read_outputs(), expected, strict=True):
+                if not np.allclose(actual, reference, rtol=1e-3, atol=1e-3):
+                    raise RuntimeError("Persistent inference output validation failed.")
         for _ in range(max(1, cfg.warmup)):
-            backend.run(model, feed)
+            run()
         connection.send({"ready": True})
         t_start = connection.recv()
         start.wait()
@@ -90,7 +101,7 @@ def _process_lane(connection, job, cfg, count, issued, start, stop):
                     break
                 issued.value += 1
             t0 = time.perf_counter()
-            backend.run(model, feed)
+            run()
             timings.append((time.perf_counter() - t0) * 1000)
         connection.send({"latencies_ms": timings, "host_cpu_seconds": time.process_time() - cpu0})
     except BaseException as exc:

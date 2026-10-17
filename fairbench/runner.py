@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from . import __version__, models, system
@@ -42,6 +43,7 @@ DEFAULT_WORKLOADS = [
 ]
 
 WORKLOAD_SETS = {
+    "peak": {"label": "最大スループット（デバイス別探索）", "workloads": DEFAULT_WORKLOADS},
     "precision": {"label": "精度別性能（FP16・INT8）", "workloads": DEFAULT_WORKLOADS},
     "npu_peak": {"label": "NPU向け INT8・並列測定", "workloads": ["dense_static_int8"]},
     "standard": {"label": "標準（全デバイスでFP16・INT8）", "workloads": DEFAULT_WORKLOADS},
@@ -256,6 +258,16 @@ def run_suite(
             )
 
     # ---- measure ------------------------------------------------------
+    selections = {}
+    if cfg.mode == "peak":
+        from .peak import search
+
+        report["peak_searches"] = []
+        for target in runnable:
+            for workload in workload_names:
+                selection = search(target, workload, cfg, progress)
+                selections[(target.id, workload)] = selection
+                report["peak_searches"].append(selection)
     # Interleave the repeats across targets so that a warming chassis or a
     # background update hits every device, not just the one measured last.
     schedule: list[tuple[int, Target, str]] = []
@@ -278,18 +290,26 @@ def run_suite(
 
     for index, (repeat, target, workload) in enumerate(schedule, start=1):
         precision = precision_of(workload)
+        selection = selections.get((target.id, workload))
+        worker_cfg = replace(cfg, suite="custom", mode="throughput", **selection["selected"]) if selection and selection["selected"] else cfg
         job = {
             "target": target.to_dict(),
             "workload": workload,
             "precision": precision,
-            "cfg": cfg.to_dict(),
+            "cfg": worker_cfg.to_dict(),
             "repeat_index": repeat,
             "power_sources": power_sources,
         }
         tag = f"{_slug(target.id)}--{workload}--r{repeat}"
         trials = (6 if target.kind == "npu" else 4) if cfg.mode == "throughput" and not cfg.requests else 1
         timeout = trials * (cfg.max_seconds + 420.0)
-        result = spawn_worker(job, timeout=timeout, tag=tag)
+        result = spawn_worker(job, timeout=timeout, tag=tag) if not selection or selection["selected"] else {
+            "ok": False, "target_id": target.id, "target_label": target.label, "kind": target.kind,
+            "vendor": target.vendor, "backend": target.backend, "workload": workload,
+            "error": "No valid peak-search candidate completed. See peak_searches for all attempted settings."}
+        if selection:
+            result.update({"measurement_mode": "peak", "measurement_scope": selection["scope"],
+                           "peak_settings": selection["selected"], "peak_candidate_count": len(selection["trials"])})
         result["repeat_index"] = repeat
         result["precision"] = precision
         report["cells"].append(result)
@@ -338,7 +358,7 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for (target_id, workload), items in groups.items():
         good = [c for c in items if c.get("ok")]
-        base = (items[0] if items else {}) or {}
+        base = (good[0] if good else items[0] if items else {}) or {}
         row: dict[str, Any] = {
             "target_id": target_id,
             "workload": workload,
@@ -350,6 +370,9 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "precision": base.get("precision") or precision_of(workload),
             "session": base.get("session", {}),
             "measurement_mode": base.get("measurement_mode", "latency"),
+            "measurement_scope": base.get("measurement_scope", "host_to_host"),
+            "peak_settings": base.get("peak_settings"),
+            "peak_candidate_count": base.get("peak_candidate_count"),
             "concurrent_requests_per_repeat": [c.get("concurrent_requests", 1) for c in good],
             "throughput_trials": [c.get("throughput_trials", []) for c in good] if base.get("measurement_mode") == "throughput" else [],
             "repeats_requested": len(items),
@@ -403,6 +426,18 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row["compute_precisions"] = sorted(set.union(*precision_sets)) if precision_sets else []
         row["compute_precision_complete"] = bool(precision_sets) and all(precision_sets)
         row["compute_precision_sources"] = sorted({(cell.get("session") or {}).get("compute_precision_source", "unavailable") for cell in good})
+        gpu_probes = [(cell.get("session") or {}).get("gpu_precision", {}) for cell in good]
+        if any(gpu_probes):
+            confirmed = [probe for probe in gpu_probes if probe.get("available")]
+            row["gpu_precision"] = {
+                "available": len(confirmed) == len(good),
+                "tensor_precisions": sorted({value for probe in confirmed for value in probe["tensor_precisions"]}),
+                "repeats_measured": len(confirmed), "repeats": gpu_probes,
+                "evidence": sorted({probe["evidence"] for probe in confirmed}),
+                "arithmetic_precision": "unverified", "accumulator_precision": "unverified",
+                "reason": "; ".join(sorted({probe.get("reason", "Precision probe missing in a repeat.")
+                                            for probe in gpu_probes if not probe.get("available")})),
+            }
         timings = [cell.get("timing_breakdown", {}) for cell in good]
         available_timings = [timing for timing in timings if timing.get("available")]
         row["timing_breakdown"] = {
@@ -464,6 +499,8 @@ def _score(report: dict[str, Any]) -> dict[str, Any]:
     Ratios are taken against the *same machine's* CPU EP result, which keeps the
     index immune to whatever CPU the laptop happens to have.
     """
+    if (report.get("config") or {}).get("mode") == "peak":
+        return {"baseline": None, "note": "Device-specific sizes/settings and measurement scopes differ; compare measured operation rates, not inference-count ratios."}
     rows = [r for r in report["results"] if r.get("ok")]
     cpus = [r for r in rows if r.get("kind") == "cpu" and r.get("backend") == "ort"]
     if not cpus:

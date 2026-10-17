@@ -60,3 +60,6 @@ class Backend(abc.ABC):
     def diagnose(self, compiled: CompiledModel, built: BuiltModel, target: Target,
                  cfg: RunConfig, feed: dict[str, np.ndarray]) -> dict[str, Any]:
         return {"available": False, "reason": "Transfer/compute separation is not available for this backend."}
+
+    def prepare_resident(self, compiled: CompiledModel, feed: dict[str, np.ndarray], target: Target):
+        raise BackendError("Persistent device buffers are not supported by this backend.")

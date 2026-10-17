@@ -60,6 +60,18 @@ for (const filename of (fs.existsSync(reportDirectory) ? fs.readdirSync(reportDi
 console.log('Precision display passed: FP16 TFLOPS and INT8 TOPS on every device; FP32 excluded.');
 assert.equal(context.formatExecutionPrecision({ compute_precisions: ['f32'] }), 'FP32（ランタイム報告）');
 assert.equal(context.formatExecutionPrecision({ precision: 'fp16' }), '未確認');
+assert.equal(context.formatExecutionPrecision({ gpu_precision: {
+  available: true, tensor_precisions: ['float16'],
+} }), 'FP16（GPU割当グラフ型・内部演算/蓄積は未確認）');
+assert.equal(context.formatExecutionPrecision({ gpu_precision: {
+  available: false, tensor_precisions: ['int8'],
+} }), '未確認');
+const probedCard = { children: [], appendChild(child) { this.children.push(child); } };
+context.renderPrecisionRates(probedCard, [{ kind: 'gpu', precision: 'fp16', ok: true, flops_per_s: 2e12,
+  gpu_precision: { available: true, tensor_precisions: ['float16'] },
+}], 'gpu');
+assert(probedCard.children.some((child) => child.textContent.includes('演算入力 FP16（GPU割当グラフ型')));
+assert(!probedCard.children.some((child) => child.textContent.includes('実行 FP16')));
 assert.equal(context.formatExecutionPrecision({ compute_precisions: ['i8', 'f32'], compute_precision_complete: false }), 'FP32/INT8（一部未確認）');
 const timedCard = { children: [], appendChild(child) { this.children.push(child); } };
 context.renderPrecisionRates(timedCard, [{ kind: 'gpu', precision: 'fp16', ok: true, flops_per_s: 2e12,
@@ -71,3 +83,9 @@ const oldGrade = { results: [{ ok: true, repeats_ok: 1 }], grade: { checks: [
 ] } };
 assert.equal(context.gradeChecks(oldGrade)[0].status, 'skip');
 assert(!context.gradeChecks(oldGrade)[1].detail.includes('repeats agree'));
+const peakCard = { children: [], appendChild(child) { this.children.push(child); } };
+context.renderPrecisionRates(peakCard, [{ kind: 'gpu', precision: 'fp16', ok: true, flops_per_s: 30e12,
+  peak_settings: { gemm_size: 2048, requests: 1, threads: 6 }, peak_candidate_count: 4,
+  measurement_scope: 'device_resident' }], 'gpu');
+assert(peakCard.children.some((child) => child.textContent.includes('行列 2048×2048・1並列・6スレッド枠')));
+assert(peakCard.children.some((child) => child.textContent.includes('GPU常駐（入出力転送を除外）')));
