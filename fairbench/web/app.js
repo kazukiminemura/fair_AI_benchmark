@@ -308,7 +308,7 @@ function renderOverview() {
     if (best && maxRate > 0) meter.appendChild(el('span', { style: `width:${100 * best.flops_per_s / maxRate}%` }));
     card.appendChild(meter);
     card.appendChild(el('p', { class: 'device-definition' }, best
-      ? `${best.workload} · ${best.precision || '精度未記録'} · ${best.target_label || best.target_id}`
+      ? `${best.workload} · ${best.precision || '精度未記録'}${best.measurement_mode === 'throughput' ? ' · ' + (best.concurrent_requests_per_repeat || []).join('/') + '並列' : ''} · ${best.target_label || best.target_id}`
       : measured.length ? '演算性能の数値が記録されていません' : '今回の結果には含まれていません'));
     const target = (rep?.targets || []).find((t) => t.id === best?.target_id);
     card.appendChild(el('p', { class: 'device-path' }, best ? (target?.detail || best.target_label || best.target_id) : '機器の有無・設定は詳細で確認できます'));
@@ -635,7 +635,7 @@ function renderTable(rep) {
     dev.innerHTML = `<span class="dev-tag"><i class="dev-dot" style="background:${colour}"></i>${esc(r.target_label || r.target_id)}${warnings.length ? ` <span class="flag" title="${esc(warnings.join(', '))}">▲</span>` : ''}</span>`;
     cells.push(dev);
     cells.push(el('td', {}, r.workload));
-    cells.push(el('td', { html: `<span class="prec">${esc(r.precision || '')}</span>` }));
+    cells.push(el('td', { title: `${r.session?.quantization || ''}; runtime precision: ${JSON.stringify(r.session?.execution_precisions || {})}; parallel requests: ${(r.concurrent_requests_per_repeat || [1]).join('/')}`, html: `<span class="prec">${esc(r.precision || '')}</span>` }));
     if (!r.ok) {
       const td = el('td', { class: 'muted' }, 'failed');
       td.colSpan = cols.length - 3;
@@ -684,7 +684,11 @@ function renderProvenance(rep) {
     ['host', sys.hostname],
     ['cpu', (sys.cpu || {}).name],
     ['cores', `${(sys.cpu || {}).physical_cores}C / ${(sys.cpu || {}).logical_cores}T`],
-    ['memory', sys.memory ? `${sys.memory.total_gib} GiB` + (sys.memory.speed_mts ? ` @ ${sys.memory.speed_mts}` : '') : null],
+    ['memory', sys.memory ? `${sys.memory.total_gib} GiB` + (sys.memory.speed_mts ? ` @ ${sys.memory.speed_mts} MT/s` : '') : null],
+    ['RAMコピー帯域（読出＋書込）', sys.memory?.bandwidth?.available ? `${fmt(sys.memory.bandwidth.gb_per_s, 1)} GB/s（実測・NPU専用帯域ではありません）` : '未計測'],
+    ['帯域測定条件', sys.memory?.bandwidth?.available ? `${fmt(sys.memory.bandwidth.buffer_bytes / 1024**2, 0)} MiB × 2バッファ・${sys.memory.bandwidth.samples}回の中央値` : null],
+    ['メモリデータ幅', (sys.memory?.modules || []).map((m) => `${m.slot || 'module'}: ${m.data_width_bits ? m.data_width_bits + ' bit' : '不明'}`).join(' / ') || '不明'],
+    ['理論メモリ帯域', 'チャネル構成を確定できないため算出しません'],
     ['os', `${sys.os_name} ${sys.os_release} (${sys.os_version})`],
     ['python', sys.python],
   ]);
@@ -696,7 +700,7 @@ function renderProvenance(rep) {
     ['backend', cfg.backend || 'all'],
     ['measurement set', cfg.suite || 'standard'],
     ['mode', cfg.mode || 'latency'],
-    ['parallel requests', cfg.mode === 'throughput' ? (cfg.requests || 'auto: 1/2/4/8') : 1],
+    ['parallel requests', cfg.mode === 'throughput' ? (cfg.requests || 'auto: 1/2/4/8（NPUは16/32も探索）') : 1],
     ['repeats', cfg.repeats],
     ['cooldown', cfg.cooldown_seconds + 's'],
     ['cpu threads', cfg.threads || cfg.physical_cores],
@@ -824,9 +828,18 @@ function buildRunModal() {
   });
   suiteSelect.appendChild(el('option', { value: 'custom' }, '個別指定'));
   suiteSelect.value = 'standard';
+  $('optMode').disabled = false;
+  $('optInt8').disabled = false;
   suiteSelect.addEventListener('change', () => {
     const suite = cat.workload_sets?.[suiteSelect.value];
+    $('optMode').disabled = suiteSelect.value === 'npu_peak';
+    $('optInt8').disabled = suiteSelect.value === 'npu_peak';
     if (!suite) return;
+    if (suiteSelect.value === 'npu_peak') {
+      $('optMode').value = 'throughput';
+      $('optRequests').value = '0';
+      $('optInt8').checked = true;
+    }
     wWrap.querySelectorAll('input').forEach((input) => {
       input.checked = suite.workloads.includes(input.value);
       input.parentElement.classList.toggle('sel', input.checked);
@@ -835,13 +848,15 @@ function buildRunModal() {
   wWrap.innerHTML = '';
   const defaults = ['dense_gemm', 'conv_vision', 'depthwise_mobile', 'transformer', 'llm_prefill', 'llm_decode'];
   (cat.workloads || []).forEach((w) => {
-    if (w.key.endsWith('_int8')) return;
+    if (w.key === 'dense_static' || (w.key.endsWith('_int8') && w.key !== 'dense_static_int8')) return;
     const on = defaults.includes(w.key);
     const l = el('label', { class: on ? 'sel' : '', style: '--accent:#2563eb' });
-    l.innerHTML = `<input type="checkbox" value="${esc(w.key)}" ${on ? 'checked' : ''} /><span>${esc(w.key)}</span><span style="color:var(--dim);font-size:11px">${esc(w.category)}</span>`;
+    l.innerHTML = `<input type="checkbox" value="${esc(w.key)}" ${on ? 'checked' : ''} /><span>${esc(w.label || w.key)}</span><span style="color:var(--dim);font-size:11px">${esc(w.category)}</span>`;
     l.querySelector('input').addEventListener('change', (e) => {
       l.classList.toggle('sel', e.target.checked);
       suiteSelect.value = 'custom';
+      $('optMode').disabled = false;
+      $('optInt8').disabled = false;
     });
     l.title = w.blurb || '';
     wWrap.appendChild(l);

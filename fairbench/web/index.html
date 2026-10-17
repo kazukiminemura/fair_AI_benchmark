@@ -36,11 +36,10 @@
   <div class="content">
     <section class="overview" data-view="overview" id="overview">
       <div class="overview-heading">
-        <div><p class="eyebrow">計測結果の概要</p><h2>AI処理の速さを比べる</h2><p class="overview-machine" id="overviewMachine">計測結果を読み込み中…</p></div>
+        <div><p class="eyebrow">計測結果の概要</p><p class="overview-machine" id="overviewMachine">計測結果を読み込み中…</p></div>
         <a class="text-link" href="#history" id="overviewDate">過去の結果を見る →</a>
       </div>
       <div class="overview-status" id="overviewStatus" role="status">保存済みの計測結果を確認しています。</div>
-      <p class="comparison-guide">CPUを <b>1.00倍</b> とした処理速度です。<b>数値が大きいほど高速</b>です。</p>
       <div class="device-summary" id="overviewDevices"></div>
       <div class="overview-foot">
         <p id="overviewCoverage">計測を始めると、ここに結果を表示します。</p>
@@ -145,7 +144,7 @@
       <div class="field"><label>繰り返し回数</label><input type="number" id="optRepeats" min="1" max="10" value="3" /></div>
       <div class="field"><label>1件あたりの秒数</label><input type="number" id="optSeconds" min="1" max="120" value="4" /></div>
       <div class="field"><label for="optMode">測定モード</label><select id="optMode"><option value="latency">単発の遅延</option><option value="throughput">最大スループット</option></select></div>
-      <div class="field"><label for="optRequests">並列数（0＝1/2/4/8を探索）</label><input type="number" id="optRequests" min="0" max="32" value="0" /></div>
+      <div class="field"><label for="optRequests">並列数（0＝自動探索・NPUは最大32）</label><input type="number" id="optRequests" min="0" max="32" value="0" /></div>
       <div class="field"><label>CPUスレッド数</label><input type="number" id="optThreads" min="1" max="128" placeholder="physical cores" /></div>
     </div>
     <div class="field toggles">

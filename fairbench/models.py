@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -587,7 +587,12 @@ def build_llm_decode() -> BuiltModel:
 # --------------------------------------------------------------------------
 # registry
 # --------------------------------------------------------------------------
+def build_dense_static() -> BuiltModel:
+    return replace(build_dense_gemm(), key="dense_static", description="MLP for static INT8 QDQ calibration")
+
+
 BASE_BUILDERS: dict[str, Callable[[], BuiltModel]] = {
+    "dense_static": build_dense_static,
     "dense_gemm": build_dense_gemm,
     "conv_vision": build_conv_vision,
     "depthwise_mobile": build_depthwise_mobile,
@@ -622,7 +627,7 @@ def build_smoke() -> BuiltModel:
 # Graphs that tolerate post-training integer quantisation cleanly (MatMul-only
 # graphs; convolutions need a calibrated static pipeline, which is provided by
 # the OpenVINO backend instead).
-QUANTISABLE = ("dense_gemm", "llm_decode", "transformer")
+QUANTISABLE = ("dense_gemm", "llm_decode", "transformer", "dense_static")
 
 # Why the last quantisation attempt failed, if it did. Surfaced to the user
 # instead of a silent "unknown workload".
@@ -635,7 +640,7 @@ def build_all(include_int8: bool = True) -> dict[str, BuiltModel]:
         models[key] = fn()
     if include_int8:
         for key in QUANTISABLE:
-            q = quantise_dynamic(models[key])
+            q = quantise_static(models[key]) if key == "dense_static" else quantise_dynamic(models[key])
             if q is not None:
                 models[q.key] = q
     return models
@@ -655,7 +660,8 @@ def build_one(key: str) -> BuiltModel:
     if key.endswith("_int8"):
         base = key[: -len("_int8")]
         if base in BASE_BUILDERS:
-            quantised = quantise_dynamic(BASE_BUILDERS[base]())
+            built = BASE_BUILDERS[base]()
+            quantised = quantise_static(built) if base == "dense_static" else quantise_dynamic(built)
             if quantised is not None:
                 return quantised
             raise KeyError(f"workload '{key}' is unavailable: {QUANTISATION_ERROR or 'quantisation failed'}")
@@ -664,6 +670,51 @@ def build_one(key: str) -> BuiltModel:
 
 def has_int8(key: str) -> bool:
     return key in QUANTISABLE
+
+
+def quantise_static(built: BuiltModel) -> BuiltModel | None:
+    """Calibrate activations and weights for QDQ INT8, using fixed synthetic inputs.
+
+    These are synthetic workloads, so calibration represents their seeded input
+    distribution rather than accuracy on a real-world dataset. Keep the dynamic
+    variants unchanged for comparison with existing reports.
+    """
+    global QUANTISATION_ERROR
+    import tempfile
+
+    QUANTISATION_ERROR = None
+    cache = Path(".cache") / "models"
+    cache.mkdir(parents=True, exist_ok=True)
+    path = cache / f"{built.key}-qdq-v1-{built.sha256[:12]}.onnx"
+    try:
+        if not path.exists():
+            from onnxruntime.quantization import CalibrationDataReader, QuantFormat, QuantType, quantize_static
+
+            class Calibration(CalibrationDataReader):
+                def __init__(self):
+                    self.samples = iter(range(SEED + 1, SEED + 9))
+
+                def get_next(self):
+                    seed = next(self.samples, None)
+                    return built.make_inputs(seed) if seed is not None else None
+
+            with tempfile.TemporaryDirectory() as td:
+                source, output = Path(td) / "source.onnx", Path(td) / "int8.onnx"
+                source.write_bytes(built.serialise())
+                quantize_static(str(source), str(output), Calibration(),
+                                quant_format=QuantFormat.QDQ, activation_type=QuantType.QInt8,
+                                weight_type=QuantType.QInt8, per_channel=True,
+                                op_types_to_quantize=["MatMul", "Gemm"],
+                                extra_options={"ActivationSymmetric": True, "WeightSymmetric": True})
+                quantised = onnx.load(str(output))
+                onnx.checker.check_model(quantised)
+                path.write_bytes(quantised.SerializeToString(deterministic=True))
+        model = onnx.load(str(path))
+        return replace(built, key=built.key + "_int8", model=model, precision="int8",
+                       description=built.description + " [static INT8 activations + weights]")
+    except Exception as exc:
+        QUANTISATION_ERROR = f"static QDQ quantisation failed: {type(exc).__name__}: {exc}"
+        return None
 
 
 def quantise_dynamic(built: BuiltModel) -> BuiltModel | None:

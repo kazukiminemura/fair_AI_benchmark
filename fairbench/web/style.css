@@ -356,8 +356,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--cyan); outline-
 .overview-status.needs-check strong, .overview-status.caution strong { color: #86500b; }
 .overview-status.empty-state { background: #edf3fc; border-color: #d6e3f4; border-left-color: var(--cyan); }
 .overview-status.empty-state strong { color: var(--cyan); }
-.comparison-guide { margin: 0; font-size: 14px; color: var(--muted); }
-.comparison-guide b { color: var(--text); font-weight: 600; }
 .device-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .device-card { padding: 20px 22px; border: 1px solid var(--line); border-top: 4px solid var(--accent); border-radius: 12px; background: #fff; min-width: 0; box-shadow: 0 3px 12px rgba(30,50,85,.035); }
 .device-card-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }

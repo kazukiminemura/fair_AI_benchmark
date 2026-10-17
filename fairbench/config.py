@@ -60,6 +60,9 @@ class RunConfig:
             raise ValueError("mode must be latency or throughput")
         if not isinstance(self.requests, int) or not 0 <= self.requests <= 32:
             raise ValueError("requests must be an integer between 0 (auto) and 32")
+        if self.suite == "npu_peak":
+            self.mode = "throughput"
+            self.include_int8 = True
 
     def resolve_threads(self) -> int:
         if self.threads and self.threads > 0:

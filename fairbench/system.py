@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -108,6 +109,7 @@ class MemoryInfo:
     total_gib: float | None = None
     speed_mts: int | None = None
     modules: list[dict[str, Any]] = field(default_factory=list)
+    bandwidth: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -236,7 +238,7 @@ def _collect_memory() -> MemoryInfo:
     if IS_WINDOWS:
         data = _powershell_json(
             "Get-CimInstance Win32_PhysicalMemory | "
-            "Select-Object Capacity,Speed,Manufacturer,PartNumber | ConvertTo-Json -Compress"
+            "Select-Object Capacity,Speed,ConfiguredClockSpeed,DataWidth,DeviceLocator,Manufacturer,PartNumber | ConvertTo-Json -Compress"
         )
         total = 0
         speeds: list[int] = []
@@ -244,12 +246,15 @@ def _collect_memory() -> MemoryInfo:
             r = r or {}
             cap = r.get("Capacity") or 0
             total += int(cap)
-            if r.get("Speed"):
-                speeds.append(int(r["Speed"]))
+            speed = r.get("ConfiguredClockSpeed") or r.get("Speed")
+            if speed:
+                speeds.append(int(speed))
             mem.modules.append(
                 {
                     "capacity_gib": round(int(cap) / 1024**3, 1) if cap else None,
-                    "speed_mts": r.get("Speed"),
+                    "speed_mts": speed,
+                    "data_width_bits": r.get("DataWidth") if r.get("DataWidth") not in (None, 0, 65535) else None,
+                    "slot": r.get("DeviceLocator"),
                     "part": (r.get("PartNumber") or "").strip() or None,
                 }
             )
@@ -265,6 +270,35 @@ def _collect_memory() -> MemoryInfo:
         except Exception:
             pass
     return mem
+
+
+def measure_memory_bandwidth(mem: MemoryInfo) -> None:
+    """Measure host RAM copy traffic (read + write), not NPU DMA or peak.
+
+    Called before the inference suite, never during discovery or inference.
+    Sizes and sample rates are recorded for reproducibility.
+    """
+    if mem.bandwidth:
+        return
+    import numpy as np
+
+    size = max(1024**2, min(256 * 1024**2, int((mem.total_gib or 2) * 1024**3 / 32)))
+    try:
+        source = np.ones(size, dtype=np.uint8)
+        destination = np.empty_like(source)
+        np.copyto(destination, source)
+        rates = []
+        for _ in range(5):
+            started = time.perf_counter()
+            np.copyto(destination, source)
+            elapsed = time.perf_counter() - started
+            rates.append(2 * size / elapsed / 1e9)
+        mem.bandwidth = {"available": True, "gb_per_s": float(np.median(rates)),
+                         "method": "numpy.copyto: host RAM read + write; not NPU bandwidth",
+                         "buffer_bytes": size, "traffic_bytes_per_copy": 2 * size,
+                         "samples_gb_per_s": rates, "samples": len(rates)}
+    except (MemoryError, ValueError, RuntimeError) as exc:
+        mem.bandwidth = {"available": False, "error": str(exc)}
 
 
 def _collect_adapters() -> list[AdapterInfo]:

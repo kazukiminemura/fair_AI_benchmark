@@ -46,6 +46,7 @@ DEFAULT_WORKLOADS = [
 ]
 
 WORKLOAD_SETS = {
+    "npu_peak": {"label": "NPU向け INT8・並列測定", "workloads": ["dense_static_int8"]},
     "standard": {"label": "標準（全モデル）", "workloads": DEFAULT_WORKLOADS},
     "compute": {"label": "行列計算", "workloads": ["dense_gemm"]},
     "vision": {"label": "画像処理", "workloads": ["conv_vision", "depthwise_mobile"]},
@@ -54,6 +55,8 @@ WORKLOAD_SETS = {
 }
 
 WORKLOAD_META: dict[str, dict[str, str]] = {
+    "dense_static": {"category": "dense", "blurb": "Static INT8 calibration source (same MLP as dense_gemm)."},
+    "dense_static_int8": {"label": "行列計算（静的INT8）", "category": "quantised", "blurb": "入力と重みを事前にINT8量子化した行列計算です。"},
     "dense_gemm": {"category": "dense", "blurb": "Wide MLP; pure matrix throughput. The NPU's home turf."},
     "conv_vision": {"category": "vision", "blurb": "Convolutional backbone; classic image inference."},
     "depthwise_mobile": {"category": "vision", "blurb": "MobileNet-style depthwise CNN; what NPUs are specified for."},
@@ -176,6 +179,7 @@ def run_suite(
     started = time.time()
     report_warnings: list[str] = []
     fp = fingerprint or system.collect()
+    system.measure_memory_bandwidth(fp.memory)
     cfg.physical_cores = fp.cpu.physical_cores
     cfg.logical_cores = fp.cpu.logical_cores
 
@@ -282,7 +286,7 @@ def run_suite(
             "power_sources": power_sources,
         }
         tag = f"{_slug(target.id)}--{workload}--r{repeat}"
-        trials = 4 if cfg.mode == "throughput" and not cfg.requests else 1
+        trials = (6 if target.kind == "npu" else 4) if cfg.mode == "throughput" and not cfg.requests else 1
         timeout = trials * (cfg.max_seconds + 420.0)
         result = spawn_worker(job, timeout=timeout, tag=tag)
         result["repeat_index"] = repeat

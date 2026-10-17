@@ -115,6 +115,16 @@ class OpenVinoBackend(Backend):
             raise BackendError(f"OpenVINO could not compile for {target.device}: {exc}") from exc
         compile_ms = (time.perf_counter() - started) * 1000
 
+        execution_precisions: dict[str, int] = {}
+        try:
+            for node in compiled.get_runtime_model().get_ops():
+                info = node.get_rt_info()
+                if "runtimePrecision" in info:
+                    value = str(info["runtimePrecision"].value)
+                    execution_precisions[value] = execution_precisions.get(value, 0) + 1
+        except Exception:
+            pass  # Not every device/driver exposes execution precision.
+
         return CompiledModel(
             handle=compiled,
             compile_ms=compile_ms,
@@ -123,8 +133,10 @@ class OpenVinoBackend(Backend):
             meta={
                 "execution_providers": [f"OpenVINO {target.device}"],
                 "input_graph_precision": built.precision,
-                "inference_precision_hint": "fp16" if target.kind in ("gpu", "npu") else "runtime_default",
+                "inference_precision_hint": "fp16" if target.kind in ("gpu", "npu") and precision != "int8" else "runtime_default",
+                "quantization": "static_qdq" if built.key == "dense_static_int8" else ("dynamic" if precision == "int8" else "none"),
                 "precision_note": "Hint is a compiler preference, not proof of every operator's execution precision.",
+                "execution_precisions": execution_precisions,
                 "requested_provider": f"OpenVINO:{target.device}",
                 "openvino_properties": {k: str(v) for k, v in props.items()},
                 "intra_op_threads": cfg.resolve_threads() if target.kind == "cpu" else None,
@@ -147,7 +159,7 @@ class OpenVinoBackend(Backend):
                 props[ov.properties.inference_num_threads()] = cfg.resolve_threads()
             except Exception:
                 pass
-        elif target.kind in ("gpu", "npu"):
+        elif target.kind in ("gpu", "npu") and precision != "int8":
             # Both accelerators receive the same hint. Previously the GPU was
             # forced to FP32 while the NPU used FP16 for the same FP32 graph.
             try:
