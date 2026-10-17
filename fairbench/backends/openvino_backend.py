@@ -149,6 +149,8 @@ class OpenVinoBackend(Backend):
                                  else "dynamic" if precision == "int8" else "none"),
                 "precision_note": "Hint is a compiler preference, not proof of every operator's execution precision.",
                 "execution_precisions": execution_precisions,
+                "compute_precisions": sorted(compute_precisions),
+                "compute_precision_source": "OpenVINO runtime compute-node metadata",
                 "requested_provider": f"OpenVINO:{target.device}",
                 "openvino_properties": {k: str(v) for k, v in props.items()},
                 "intra_op_threads": cfg.resolve_threads() if target.kind == "cpu" else None,

@@ -607,7 +607,7 @@ def build_precision_gemm(precision: str = "fp32") -> BuiltModel:
             helper.make_node("Cast", ["output_half"], ["y"], to=TensorProto.FLOAT),
         ])
     elif precision in ("fp8", "int8", "int4"):
-        opset = 21
+        opset = OPSET if precision == "int8" else 21
         dtype = {"fp8": TensorProto.FLOAT8E4M3FN, "int8": TensorProto.INT8, "int4": TensorProto.INT4}[precision]
         input_scale, weight_scale = (0.5, 1 / 64) if precision == "int4" else (1 / 32, 1 / 1024)
         quantized = weight / weight_scale

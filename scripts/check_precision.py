@@ -26,8 +26,9 @@ def main() -> None:
         onnx.checker.check_model(built.model, full_check=True)
         assert built.sha256 == models.build_one(built.key).sha256
         assert precision_of(built.key) == built.precision == precision
-        assert built.key in DEFAULT_WORKLOADS
-        assert built.key in resolve_workloads(RunConfig(suite="precision"))
+        if precision in ("fp16", "int8"):
+            assert built.key in DEFAULT_WORKLOADS
+            assert built.key in resolve_workloads(RunConfig(suite="precision"))
         assert next(weight for weight in built.model.graph.initializer if weight.name == "weight").data_type == dtype
         assert built.flops == 2 * 512 * 1024 * 1024
         if precision in ("fp16", "int8"):
@@ -37,6 +38,7 @@ def main() -> None:
             assert np.isfinite(actual).all() and error < (0.001 if precision == "fp16" else 0.03), error
 
     backend = OrtBackend()
+    assert resolve_workloads(RunConfig()) == ["precision_gemm_fp16", "precision_gemm_int8"]
     target = Target("test-gpu", "ort", "DmlExecutionProvider", "gpu", "unknown", "GPU")
     session = MagicMock()
     session.get_providers.return_value = ["DmlExecutionProvider"]

@@ -28,7 +28,7 @@ def format_compute_rate(row: dict[str, Any]) -> str:
     value = row.get("flops_per_s")
     if value is None or not math.isfinite(value):
         return "—"
-    if row.get("kind") == "npu":
+    if str(row.get("precision", "")).lower().startswith("int"):
         return f"{value / 1e12:.3f} TOPS"
     return f"{value / 1e12:.3f} TFLOPS"
 
@@ -36,6 +36,16 @@ def format_compute_rate(row: dict[str, Any]) -> str:
 def default_name(prefix: str = "fairbench") -> str:
     stamp = time.strftime("%Y%m%d-%H%M%S")
     return f"{prefix}-{stamp}.json"
+
+
+def format_execution_precision(row: dict[str, Any]) -> str:
+    values = row.get("compute_precisions", (row.get("session") or {}).get("compute_precisions", []))
+    names = {"f32": "FP32", "float": "FP32", "float32": "FP32", "f16": "FP16", "float16": "FP16",
+             "i8": "INT8", "int8": "INT8", "u8": "UINT8", "uint8": "UINT8", "i32": "INT32", "int32": "INT32"}
+    if not values:
+        return "unverified"
+    text = "/".join(sorted({names.get(value.lower(), value.upper()) for value in values}))
+    return text if row.get("compute_precision_complete", True) else text + " (partially unverified)"
 
 
 def save(report: dict[str, Any], path: str | Path | None = None) -> Path:

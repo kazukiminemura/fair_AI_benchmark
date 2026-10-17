@@ -71,11 +71,13 @@ def check_compute_units() -> None:
 
     for kind in ("cpu", "gpu"):
         assert format_compute_rate({"kind": kind, "flops_per_s": 2e12}) == "2.000 TFLOPS"
-    assert format_compute_rate({"kind": "npu", "flops_per_s": 2e12}) == "2.000 TOPS"
-    assert format_compute_rate({"kind": "npu", "flops_per_s": 0}) == "0.000 TOPS"
+    for kind in ("cpu", "gpu", "npu"):
+        assert format_compute_rate({"kind": kind, "precision": "fp16", "flops_per_s": 2e12}) == "2.000 TFLOPS"
+        assert format_compute_rate({"kind": kind, "precision": "int8", "flops_per_s": 2e12}) == "2.000 TOPS"
+    assert format_compute_rate({"kind": "npu", "precision": "int8", "flops_per_s": 0}) == "0.000 TOPS"
     assert format_compute_rate({"kind": "npu", "flops_per_s": float("nan")}) == "—"
     assert format_compute_rate({"kind": "cpu"}) == "—"
-    print("Compute units passed: CPU/GPU TFLOPS, NPU TOPS, zero/missing values.")
+    print("Compute units passed: FP16 TFLOPS and INT8 TOPS on every device, zero/missing values.")
 
 
 def check_windowsml_npu_requirement() -> None:

@@ -266,6 +266,8 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
 
     if cfg.mode == "throughput":
         measured = _run_throughput(backend, compiled, built, target, cfg, feed, result, job)
+        if measured.get("ok"):
+            measured["timing_breakdown"] = backend.diagnose(compiled, built, target, cfg, feed)
         measured["elapsed_s"] = time.perf_counter() - started
         return measured
 
@@ -358,6 +360,7 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
     )
     if stats.cv_trimmed > 0.05:
         warnings.append(f"high variance (trimmed CV {stats.cv_trimmed:.1%}); treat the median with care")
+    result["timing_breakdown"] = backend.diagnose(compiled, built, target, cfg, feed)
     return result
 
 

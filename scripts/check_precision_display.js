@@ -14,45 +14,60 @@ const rows = [
   { kind: 'cpu', precision: 'fp16', flops_per_s: 2e12 },
   { kind: 'cpu', precision: 'fp16', flops_per_s: 3e12 },
   { kind: 'cpu', precision: 'fp8', flops_per_s: 4e12 },
+  { kind: 'cpu', precision: 'int8', flops_per_s: 7e12 },
   { kind: 'gpu', precision: 'FP16', flops_per_s: 5e12 },
+  { kind: 'gpu', precision: 'INT8', flops_per_s: 8e12 },
   { kind: 'gpu', precision: 'fp8', flops_per_s: NaN },
   { kind: 'gpu', precision: 'fp8', flops_per_s: -1 },
   { kind: 'npu', precision: 'int8', flops_per_s: 6e12 },
+  { kind: 'npu', precision: 'fp16', flops_per_s: 9e12 },
   { kind: 'npu', precision: 'int4', flops_per_s: 0 },
 ].map((row) => ({ ...row, ok: true }));
 rows.push({ kind: 'cpu', precision: 'fp16', flops_per_s: 100e12, ok: false });
 rows.push({ kind: 'gpu', precision: 'fp32', flops_per_s: 100e12, ok: true,
   session: { inference_precision_hint: 'fp16' } });
 for (const [kind, labels, values] of [
-  ['cpu', ['FP32 · TFLOPS', 'FP16 · TFLOPS', 'FP8 · TFLOPS'], ['99.000', '3.000', '4.000']],
-  ['gpu', ['FP32 · TFLOPS', 'FP16 · TFLOPS', 'FP8 · TFLOPS'], ['100.000', '5.000', '未計測']],
-  ['npu', ['INT8 · TOPS', 'INT4 · TOPS'], ['6.000', '0.000']],
+  ['cpu', ['FP16 · TFLOPS', 'INT8 · TOPS'], ['3.000', '7.000']],
+  ['gpu', ['FP16 · TFLOPS', 'INT8 · TOPS'], ['5.000', '8.000']],
+  ['npu', ['FP16 · TFLOPS', 'INT8 · TOPS'], ['9.000', '6.000']],
 ]) {
   const card = { children: [], appendChild(child) { this.children.push(child); } };
   context.renderPrecisionRates(card, rows, kind);
   assert.deepEqual(card.children.filter((child) => child.className === 'device-role').map((child) => child.textContent), labels);
   assert.deepEqual(card.children.filter((child) => child.className.includes('precision-index')).map((child) => child.textContent), values);
-  assert.equal(context.formatComputeRate({ kind, flops_per_s: 2e12 }), kind === 'npu' ? '2.000 TOPS' : '2.000 TFLOPS');
+  assert.equal(context.formatComputeRate({ kind, precision: 'int8', flops_per_s: 2e12 }), '2.000 TOPS');
+  assert.equal(context.formatComputeRate({ kind, precision: 'fp16', flops_per_s: 2e12 }), '2.000 TFLOPS');
 }
 const empty = { children: [], appendChild(child) { this.children.push(child); } };
 context.renderPrecisionRates(empty, [], 'cpu');
 assert.equal(empty.children.filter((child) => child.textContent === '未計測').length, 2);
 assert.equal(context.formatComputeRate({ kind: 'cpu', flops_per_s: NaN }), '—');
 const failedCard = { children: [], appendChild(child) { this.children.push(child); } };
-context.renderPrecisionRates(failedCard, [{ kind: 'gpu', precision: 'fp8', ok: false, error: 'Unsupported FP8' }], 'gpu');
+context.renderPrecisionRates(failedCard, [{ kind: 'gpu', precision: 'int8', ok: false, error: 'Unsupported INT8' }], 'gpu');
 assert.equal(failedCard.children[4].textContent, '実行不可');
-assert.equal(failedCard.children[5].textContent, 'FP8: Unsupported FP8');
+assert.equal(failedCard.children[5].textContent, 'INT8: Unsupported INT8');
 const reportDirectory = require('node:path').join(__dirname, '../results');
 for (const filename of (fs.existsSync(reportDirectory) ? fs.readdirSync(reportDirectory) : []).filter((name) => name.endsWith('.json'))) {
   const report = JSON.parse(fs.readFileSync(require('node:path').join(reportDirectory, filename), 'utf8').replace(/^\uFEFF/, ''));
   for (const kind of ['cpu', 'gpu']) {
-    const recorded = (report.results || []).filter((row) => row.ok && row.kind === kind && row.precision === 'fp32'
-      && Number.isFinite(row.flops_per_s) && row.flops_per_s >= 0);
-    if (!recorded.length) continue;
     const card = { children: [], appendChild(child) { this.children.push(child); } };
     context.renderPrecisionRates(card, report.results, kind);
-    assert.equal(card.children[0].textContent, 'FP32 · TFLOPS', filename);
-    assert.equal(card.children[1].textContent, (Math.max(...recorded.map((row) => row.flops_per_s)) / 1e12).toFixed(3), filename);
+    assert.equal(card.children[0].textContent, 'FP16 · TFLOPS', filename);
+    assert.deepEqual(card.children.filter((child) => child.className === 'device-role').map((child) => child.textContent),
+      ['FP16 · TFLOPS', 'INT8 · TOPS'], filename);
   }
 }
-console.log('Precision display passed: separate rates, units, invalid/failed results, FP32 recovery in saved reports.');
+console.log('Precision display passed: FP16 TFLOPS and INT8 TOPS on every device; FP32 excluded.');
+assert.equal(context.formatExecutionPrecision({ compute_precisions: ['f32'] }), 'FP32（ランタイム報告）');
+assert.equal(context.formatExecutionPrecision({ precision: 'fp16' }), '未確認');
+assert.equal(context.formatExecutionPrecision({ compute_precisions: ['i8', 'f32'], compute_precision_complete: false }), 'FP32/INT8（一部未確認）');
+const timedCard = { children: [], appendChild(child) { this.children.push(child); } };
+context.renderPrecisionRates(timedCard, [{ kind: 'gpu', precision: 'fp16', ok: true, flops_per_s: 2e12,
+  timing_breakdown: { available: true, h2d_ms: 1, compute_ms: 2, d2h_ms: 3, repeats_measured: 3 } }], 'gpu');
+assert(timedCard.children.some((child) => child.textContent.includes('GPU常駐推論（同期込）2.000 ms')));
+const oldGrade = { results: [{ ok: true, repeats_ok: 1 }], grade: { checks: [
+  { name: 'Repeatability', status: 'pass', detail: 'spread 0%' },
+  { name: 'Timing stability', status: 'warn', detail: 'jitter 20%, but repeats agree within 0%, so throughput is stable' },
+] } };
+assert.equal(context.gradeChecks(oldGrade)[0].status, 'skip');
+assert(!context.gradeChecks(oldGrade)[1].detail.includes('repeats agree'));

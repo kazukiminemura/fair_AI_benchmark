@@ -43,16 +43,14 @@ const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? '
 const fmtInt = (v) => (v === null || v === undefined) ? '—' : Math.round(v).toLocaleString();
 function formatComputeRate(row) {
   if (!Number.isFinite(row.flops_per_s)) return '—';
-  return row.kind === 'npu'
+  return row.precision?.toLowerCase().startsWith('int')
     ? `${fmt(row.flops_per_s / 1e12, 3)} TOPS`
     : `${fmt(row.flops_per_s / 1e12, 3)} TFLOPS`;
 }
 function renderPrecisionRates(card, rows, kind) {
-  const precisions = kind === 'npu' ? ['int8', 'int4'] : ['fp16', 'fp8'];
-  if (kind !== 'npu' && rows.some((row) => row.ok && row.kind === kind && row.precision?.toLowerCase() === 'fp32'
-    && Number.isFinite(row.flops_per_s) && row.flops_per_s >= 0)) precisions.unshift('fp32');
-  const unit = kind === 'npu' ? 'TOPS' : 'TFLOPS';
+  const precisions = ['fp16', 'int8'];
   for (const precision of precisions) {
+    const unit = precision === 'int8' ? 'TOPS' : 'TFLOPS';
     const matching = rows.filter((row) => row.kind === kind && row.precision?.toLowerCase() === precision);
     const best = matching.filter((row) => row.ok
       && Number.isFinite(row.flops_per_s) && row.flops_per_s >= 0)
@@ -66,9 +64,36 @@ function renderPrecisionRates(card, rows, kind) {
     if (best) value.appendChild(el('small', {}, unit));
     card.appendChild(value);
     card.appendChild(el('p', { class: 'device-definition', title: failed?.error || '' }, best
-      ? `${best.workload} · ${best.target_label || best.target_id}`
+      ? `モデル ${precision.toUpperCase()} / 実行 ${formatExecutionPrecision(best)} · ${best.target_label || best.target_id} · ${best.repeats_ok || 0}回`
       : failed ? `${precision.toUpperCase()}: ${failureReason}` : `${precision.toUpperCase()}の測定値がありません`));
+    if (best && kind === 'gpu') {
+      const timing = best.timing_breakdown || {};
+      card.appendChild(el('p', { class: 'device-path', title: timing.note || '' }, timing.available
+        ? `入力転送 ${fmt(timing.h2d_ms, 3)} ms / GPU常駐推論（同期込）${fmt(timing.compute_ms, 3)} ms / 出力転送 ${fmt(timing.d2h_ms, 3)} ms · ${timing.repeats_measured}回の中央値`
+        : '転送・計算の分離時間は未取得'));
+    }
   }
+}
+function formatExecutionPrecision(row) {
+  const values = row.compute_precisions || row.session?.compute_precisions || [];
+  if (!values.length) return '未確認';
+  const names = { f32: 'FP32', float: 'FP32', float32: 'FP32', f16: 'FP16', float16: 'FP16',
+    i8: 'INT8', int8: 'INT8', u8: 'UINT8', uint8: 'UINT8', i32: 'INT32', int32: 'INT32' };
+  const text = [...new Set(values.map((value) => names[value.toLowerCase()] || value.toUpperCase()))].sort().join('/');
+  return text + (row.compute_precision_complete === false ? '（一部未確認）' : '（ランタイム報告）');
+}
+function gradeChecks(report) {
+  const successful = (report?.results || []).filter((row) => row.ok);
+  const repeated = successful.length && successful.every((row) => (row.repeats_ok ?? row.repeats?.repeats ?? 0) >= 2);
+  return (report?.grade?.checks || []).map((check) => {
+    if (!repeated && check.name === 'Repeatability') {
+      return { ...check, status: 'skip', detail: '独立した成功試行が2回未満のため再現性は判定不可です。3回以上で再測定してください。' };
+    }
+    if (!repeated && check.name === 'Timing stability') {
+      return { ...check, detail: check.detail.split(', but repeats agree')[0] };
+    }
+    return check;
+  });
 }
 function fmtBytes(b) {
   if (!b) return '—';
@@ -298,7 +323,7 @@ function renderOverview() {
   $('overviewDate').textContent = rep
     ? new Date(rep.started_at * 1000).toLocaleString('ja-JP') + ' の計測 · 履歴 →'
     : '過去の結果を見る →';
-  const checks = rep?.grade?.checks || [];
+  const checks = gradeChecks(rep);
   const failed = checks.filter((c) => c.status === 'fail').length;
   const warned = checks.filter((c) => c.status === 'warn').length;
   const status = $('overviewStatus');
@@ -332,7 +357,7 @@ function renderOverview() {
   const total = (rep?.results || []).length;
   $('overviewCoverage').textContent = rep
     ? `${rows.length}/${total}件成功 · 所要 ${fmtDuration(rep.duration_s)}。モデル精度ごとの最高実測値です。モデルの演算数からの換算値で、理論ピーク性能ではありません。FP16はランタイムによるエミュレーションを含む場合があります。同じモデル・精度・測定モードで比較してください。精度別負荷は「精度別性能」または標準計測で実行できます。`
-    : 'CPU・GPUはFP16 / FP8のTFLOPS、NPUはINT8 / INT4のTOPSを表示します。「精度別性能」で計測してください。対応しない精度は実行不可の理由を表示します。';
+    : 'CPU・GPU・NPUそれぞれでFP16（TFLOPS）とINT8（TOPS）を計測します。対応しない精度は実行不可の理由を表示します。';
 }
 
 const VIEWS = {
@@ -469,7 +494,7 @@ function renderGrade(rep) {
   });
 
   const checks = el('div', { class: 'checks' });
-  (g.checks || []).forEach((c) => {
+  gradeChecks(rep).forEach((c) => {
     const row = el('div', { class: 'check' });
     row.innerHTML = `<span class="mark ${esc(c.status)}">${esc(c.status)}</span><span class="name">${esc(c.name)}</span><span class="detail">${esc(c.detail)}</span>`;
     checks.appendChild(row);
@@ -624,7 +649,7 @@ function renderRadar(rep) {
 function renderTable(rep) {
   const table = $('resultTable');
   const rows = (rep.results || []).slice().sort((a, b) => (a.workload.localeCompare(b.workload)) || ((b.units_per_s || 0) - (a.units_per_s || 0)));
-  const cols = ['device', 'workload', 'prec', 'units/s', 'median ms', 'p90 ms', 'CV', '演算性能', 'host CPU s/inf', 'W', 'J/inf', 'compile ms', 'spread'];
+  const cols = ['device', 'workload', 'モデル精度', '実行精度', 'units/s', 'median ms', 'p90 ms', 'CV', '演算性能（全体）', '入力転送 ms', 'GPU常駐推論・同期 ms', '出力転送 ms', '成功回数', 'host CPU s/inf', 'W', 'J/inf', 'compile ms', 'spread'];
   table.innerHTML = '';
   const thead = el('thead');
   const tr = el('tr');
@@ -649,9 +674,10 @@ function renderTable(rep) {
     cells.push(dev);
     cells.push(el('td', {}, r.workload));
     cells.push(el('td', { title: `${r.session?.quantization || ''}; runtime precision: ${JSON.stringify(r.session?.execution_precisions || {})}; parallel requests: ${(r.concurrent_requests_per_repeat || [1]).join('/')}`, html: `<span class="prec">${esc(r.precision || '')}</span>` }));
+    cells.push(el('td', { title: (r.compute_precision_sources || []).join('; ') }, formatExecutionPrecision(r)));
     if (!r.ok) {
       const td = el('td', { class: 'muted' }, 'failed');
-      td.colSpan = cols.length - 3;
+      td.colSpan = cols.length - 4;
       td.title = r.error || '';
       cells.push(td);
     } else {
@@ -660,11 +686,16 @@ function renderTable(rep) {
       cells.push(el('td', { class: 'muted' }, fmt(lat.p90_ms, 3)));
       cells.push(el('td', { class: (lat.cv_trimmed ?? lat.cv) > 0.05 ? 'flag' : 'muted', title: `trimmed CV ${lat.cv_trimmed !== undefined ? (lat.cv_trimmed * 100).toFixed(2) + '%' : 'n/a'}, ${lat.count || 0} iterations` }, lat.cv !== undefined ? (lat.cv * 100).toFixed(1) + '%' : '—'));
       cells.push(el('td', { class: 'num', title: 'モデルの演算数 × 実測推論数からの換算値。メーカーの理論ピーク性能とは異なります。' }, formatComputeRate(r)));
+      const timing = r.timing_breakdown || {};
+      for (const phase of ['h2d_ms', 'compute_ms', 'd2h_ms']) {
+        cells.push(el('td', { class: 'num', title: timing.note || '分離時間は未取得' }, timing.available ? fmt(timing[phase], 3) : '—'));
+      }
+      cells.push(el('td', { class: 'num' }, `${r.repeats_ok || 0}/${r.repeats_requested || 0}`));
       cells.push(el('td', { class: 'muted' }, fmt(r.host_cpu_seconds_per_inference, 4)));
       cells.push(el('td', { class: 'muted' }, r.power && r.power.average_watts ? fmt(r.power.average_watts, 1) : '—'));
       cells.push(el('td', { class: 'muted' }, r.energy_per_inference_j ? fmt(r.energy_per_inference_j, 3) : '—'));
       cells.push(el('td', { class: 'muted' }, fmt(r.compile_ms, 0)));
-      cells.push(el('td', { class: 'muted' }, rep0.spread_pct !== undefined ? fmt(rep0.spread_pct, 1) + '%' : '—'));
+      cells.push(el('td', { class: 'muted' }, r.repeats_ok >= 2 && Number.isFinite(rep0.spread_pct) ? fmt(rep0.spread_pct, 1) + '%' : '判定不可'));
     }
     cells.forEach((c) => tr.appendChild(c));
     tb.appendChild(tr);

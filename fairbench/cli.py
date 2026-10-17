@@ -128,7 +128,7 @@ def _config_from_args(args: argparse.Namespace) -> RunConfig:
         cfg.min_iterations = 5
         cfg.min_seconds = 1.0
         cfg.max_seconds = 15.0
-        cfg.repeats = 1
+        cfg.repeats = 3
         cfg.cooldown_seconds = 0.5
     if args.full:
         cfg.warmup = 8
@@ -212,6 +212,10 @@ def _print_summary(report: dict) -> None:
             f"{report_mod.format_compute_rate(r):>18s} "
             f"{(f'{idx:.2f}x' if idx else ''):>6s}"
         )
+        print(f"    Runtime compute precision: {report_mod.format_execution_precision(r)}; repeats: {r.get('repeats_ok', 0)}")
+        timing = r.get("timing_breakdown") or {}
+        if timing.get("available"):
+            print(f"    H2D {timing['h2d_ms']:.3f} ms | resident inference + sync {timing['compute_ms']:.3f} ms | D2H {timing['d2h_ms']:.3f} ms (synchronized host wall time)")
     grade = report.get("grade") or {}
     letter = grade.get("letter", "?")
     colour = GREEN if letter in ("A", "B") else YELLOW if letter == "C" else RED
