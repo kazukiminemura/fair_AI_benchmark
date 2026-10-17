@@ -589,7 +589,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--suite", choices=list(WORKLOAD_SETS), default="standard", help="measurement workload set; --workloads overrides it")
     p_run.add_argument("--mode", choices=["latency", "throughput", "peak"], default=None)
     p_run.add_argument("--requests", type=int, choices=range(33), default=0, metavar="0..32", help="throughput concurrency; 0 sweeps 1/2/4/8 (NPU also 16/32)")
-    p_run.add_argument("--gemm-size", type=int, choices=[512, 1024, 2048, 4096], default=2048, help="common square GEMM size for all devices (standard default: 2048)")
+    p_run.add_argument("--gemm-size", type=int, choices=[512, 1024, 2048, 4096], default=4096, help="common square GEMM size for all devices (standard default: 4096)")
     p_run.add_argument("--targets", nargs="*", default=None, help="target ids from `fairbench devices`")
     p_run.add_argument("--workloads", nargs="*", default=None, help="workload keys (default: a representative set)")
     p_run.add_argument("--out", default=None, help="output json path")

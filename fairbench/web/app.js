@@ -867,7 +867,7 @@ function renderProvenance(rep) {
     ['理論メモリ帯域', 'チャネル構成を確定できないため算出しません'],
     ['os', `${sys.os_name} ${sys.os_release} (${sys.os_version})`],
     ['python', sys.python],
-  ]);
+  ]).classList.add('machine-block');
   block('run policy', [
     ['warm-up', cfg.warmup],
     ['min iterations', cfg.min_iterations],
@@ -969,6 +969,13 @@ function renderFromLive() {
 }
 
 /* --------------------------------------------------------------- run modal */
+function syncRunFields() {
+  const suite = $('optSuite').value;
+  $('workloadChecks').hidden = suite !== 'custom';
+  $('modeField').hidden = ['peak', 'npu_peak'].includes(suite);
+  $('requestsField').hidden = suite === 'peak' || $('optMode').value !== 'throughput';
+  $('optGemmSize').disabled = suite === 'peak';
+}
 function buildRunModal() {
   const cat = state.catalog;
   if (!cat) return;
@@ -1003,24 +1010,19 @@ function buildRunModal() {
   const suiteSelect = $('optSuite');
   suiteSelect.innerHTML = '';
   Object.entries(cat.workload_sets || {}).forEach(([key, suite]) => {
+    if (key === 'precision') return;
     suiteSelect.appendChild(el('option', { value: key }, suite.label));
   });
   suiteSelect.appendChild(el('option', { value: 'custom' }, '個別指定'));
   suiteSelect.value = 'standard';
-  $('optMode').value = suiteSelect.value === 'peak' ? 'peak' : 'latency';
-  $('optMode').disabled = suiteSelect.value === 'peak';
-  $('optInt8').disabled = false;
+  $('optMode').value = 'latency';
+  $('optMode').addEventListener('change', syncRunFields);
   suiteSelect.addEventListener('change', () => {
     const suite = cat.workload_sets?.[suiteSelect.value];
-    $('optMode').disabled = ['npu_peak', 'peak'].includes(suiteSelect.value);
-    $('optInt8').disabled = suiteSelect.value === 'npu_peak';
+    $('optMode').value = suiteSelect.value === 'npu_peak' ? 'throughput' : 'latency';
+    $('optRequests').value = '0';
+    syncRunFields();
     if (!suite) return;
-    $('optMode').value = suiteSelect.value === 'peak' ? 'peak' : 'latency';
-    if (suiteSelect.value === 'npu_peak') {
-      $('optMode').value = 'throughput';
-      $('optRequests').value = '0';
-      $('optInt8').checked = true;
-    }
     wWrap.querySelectorAll('input').forEach((input) => {
       input.checked = suite.workloads.includes(input.value);
       input.parentElement.classList.toggle('sel', input.checked);
@@ -1036,12 +1038,12 @@ function buildRunModal() {
     l.querySelector('input').addEventListener('change', (e) => {
       l.classList.toggle('sel', e.target.checked);
       suiteSelect.value = 'custom';
-      $('optMode').disabled = false;
-      $('optInt8').disabled = false;
+      syncRunFields();
     });
     l.title = w.blurb || '';
     wWrap.appendChild(l);
   });
+  syncRunFields();
 }
 
 function openModal() {
@@ -1063,17 +1065,16 @@ async function startRun() {
     backend: $('optBackend').value,
     workloads,
     suite: $('optSuite').value,
-    mode: $('optMode').value,
-    requests: Number($('optRequests').value || 0),
-    gemm_size: Number($('optGemmSize').value || 2048),
+    mode: $('optSuite').value === 'peak' ? 'peak' : $('optMode').value,
+    requests: $('optSuite').value === 'peak' || $('optMode').value !== 'throughput' ? 0 : Number($('optRequests').value || 0),
+    gemm_size: Number($('optGemmSize').value || 4096),
     repeats: Number($('optRepeats').value || 3),
     min_seconds: Number($('optSeconds').value || 4),
     threads: $('optThreads').value ? Number($('optThreads').value) : null,
-    include_int8: $('optInt8').checked,
-    check_correctness: $('optCheck').checked,
+    include_int8: true,
+    check_correctness: true,
     measure_power: $('optPower').checked,
     allow_battery: $('optBattery').checked,
-    quick: $('optQuick').checked,
     verify: true,
   };
   const res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

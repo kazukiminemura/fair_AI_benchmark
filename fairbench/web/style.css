@@ -261,13 +261,20 @@ html, body {
 .flag { color: var(--amber); }
 
 /* ---------------------------------------------------------------- provenance */
-.provenance-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.provenance-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
 .prov { padding: 12px 13px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: rgba(255,255,255,.024); min-width: 0; }
 .prov.wide { grid-column: 1 / -1; }
 .prov h3 { margin: 0 0 7px; font-size: 10.8px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); font-weight: 600; }
 .prov dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; font-size: 12.2px; }
 .prov dt { color: var(--dim); white-space: nowrap; }
 .prov dd { margin: 0; font-family: var(--mono); color: var(--text); overflow-wrap: anywhere; text-align: right; min-width: 0; }
+.machine-block dl { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.machine-block dt { white-space: normal; margin-top: 10px; }
+.machine-block dt:first-child { margin-top: 0; }
+.machine-block dd { text-align: left; font-family: var(--sans); line-height: 1.6; }
+@media (max-width: 900px) {
+  .provenance-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .hash-block dl { grid-template-columns: auto minmax(0, 1fr); }
 .prov .warn-list { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12.4px; display: flex; flex-direction: column; gap: 4px; }
 .prov .warn-list li { overflow-wrap: anywhere; }
@@ -288,6 +295,8 @@ html, body {
 @keyframes rise { from { transform: translateY(14px) scale(.985); opacity: 0; } }
 .modal h2 { margin: 0 0 4px; font-size: 20px; }
 .modal-sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+.run-advanced { border-top: 1px solid var(--line); padding-top: 14px; }
+.run-advanced summary { cursor: pointer; color: var(--muted); margin-bottom: 16px; }
 .field { margin-bottom: 16px; }
 .field > label { display: block; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin-bottom: 7px; font-weight: 600; }
 .field-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }

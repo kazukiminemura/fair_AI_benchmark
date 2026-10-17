@@ -13,7 +13,7 @@ param(
     [string[]]$Targets,
     [string[]]$Workloads,
     [int]$Repeats = 0,
-    [ValidateSet(512, 1024, 2048, 4096)][int]$GemmSize = 2048,
+    [ValidateSet(512, 1024, 2048, 4096)][int]$GemmSize = 4096,
     [switch]$AllowBattery,
     [switch]$NoServe
 )

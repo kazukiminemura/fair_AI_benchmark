@@ -159,3 +159,56 @@ assert(probedCard.children.some((child) => child.textContent.includes('行列サ
 const minimalSizedCard = { children: [], appendChild(child) { this.children.push(child); } };
 context.renderPrecisionRates(minimalSizedCard, [sizedRow], 'cpu');
 assert.equal(minimalSizedCard.children.length, 4);
+const controls = Object.fromEntries(['optSuite', 'optMode', 'workloadChecks', 'modeField', 'requestsField', 'optGemmSize',
+  'optRequests', 'optRepeats', 'optSeconds', 'optThreads', 'optBackend', 'optPower', 'optBattery', 'targetChecks']
+  .map((id) => [id, { value: '', checked: false }]));
+context.document.getElementById = (id) => controls[id];
+for (const [suite, mode, customVisible, modeVisible, requestsVisible, sizeDisabled] of [
+  ['standard', 'latency', false, true, false, false],
+  ['standard', 'throughput', false, true, true, false],
+  ['custom', 'latency', true, true, false, false],
+  ['npu_peak', 'throughput', false, false, true, false],
+  ['peak', 'latency', false, false, false, true],
+]) {
+  controls.optSuite.value = suite;
+  controls.optMode.value = mode;
+  context.syncRunFields();
+  assert.equal(!controls.workloadChecks.hidden, customVisible);
+  assert.equal(!controls.modeField.hidden, modeVisible);
+  assert.equal(!controls.requestsField.hidden, requestsVisible);
+  assert.equal(controls.optGemmSize.disabled, sizeDisabled);
+}
+const markup = fs.readFileSync(require.resolve('../fairbench/web/index.html'), 'utf8');
+assert(markup.includes('<details class="run-advanced">'));
+for (const removed of ['optQuick', 'optInt8', 'optCheck']) assert(!markup.includes(`id="${removed}"`));
+assert(!markup.includes('<option value="peak">'));
+assert(markup.includes('<option selected>4096</option>'));
+(async () => {
+  controls.targetChecks.querySelectorAll = () => [{ value: 'ort:CPUExecutionProvider' }];
+  controls.workloadChecks.querySelectorAll = () => [{ value: 'precision_gemm_fp16' }, { value: 'precision_gemm_int8' }];
+  Object.assign(controls.optGemmSize, { value: '4096' });
+  Object.assign(controls.optRepeats, { value: '3' });
+  Object.assign(controls.optSeconds, { value: '4' });
+  Object.assign(controls.optBackend, { value: 'all' });
+  context.toast = () => {};
+  let sent;
+  context.fetch = async (url, options) => { sent = JSON.parse(options.body); return { json: async () => ({ ok: false }) }; };
+  for (const [suite, mode, expectedMode, requests] of [
+    ['standard', 'latency', 'latency', 0], ['custom', 'throughput', 'throughput', 4],
+    ['npu_peak', 'throughput', 'throughput', 4], ['peak', 'latency', 'peak', 0],
+  ]) {
+    controls.optSuite.value = suite;
+    controls.optMode.value = mode;
+    controls.optRequests.value = '4';
+    await context.startRun();
+    assert.equal(sent.mode, expectedMode);
+    assert.equal(sent.requests, requests);
+    assert.equal(sent.gemm_size, 4096);
+    assert.equal(sent.check_correctness, true);
+    assert.equal(sent.include_int8, true);
+    assert.equal(sent.repeats, 3);
+    assert.equal(sent.min_seconds, 4);
+    assert(!Object.hasOwn(sent, 'quick'));
+  }
+  console.log('Simplified settings passed: conditional fields, fixed correctness, explicit timing and mode payloads.');
+})().catch((error) => { console.error(error); process.exitCode = 1; });

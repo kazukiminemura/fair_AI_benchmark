@@ -15,7 +15,7 @@ from fairbench.runner import DEFAULT_WORKLOADS, precision_of, resolve_workloads
 
 
 def main() -> None:
-    assert RunConfig().gemm_size == _config_from_args(build_parser().parse_args(["run"])).gemm_size == 2048
+    assert RunConfig().gemm_size == _config_from_args(build_parser().parse_args(["run"])).gemm_size == 4096
     assert _config_from_args(build_parser().parse_args(["run", "--gemm-size", "512"])).gemm_size == 512
     for size in (512, 2048):
         sized = models.build_one("precision_gemm_fp16", size)
