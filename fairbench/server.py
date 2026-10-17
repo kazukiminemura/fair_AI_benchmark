@@ -128,7 +128,7 @@ def _run_thread(options: dict[str, Any]) -> None:
             suite=str(options.get("suite", "custom" if options.get("workloads") else "standard")),
             mode=str(options.get("mode") or {"peak": "peak", "npu_peak": "throughput"}.get(options.get("suite"), "latency")),
             requests=int(options.get("requests", 0)),
-            gemm_size=int(options.get("gemm_size", 2048)),
+            gemm_size=int(options.get("gemm_size", 4096)),
             warmup=2 if quick else 5,
             min_iterations=5 if quick else 15,
             min_seconds=1.0 if quick else float(options.get("min_seconds", 4.0)),

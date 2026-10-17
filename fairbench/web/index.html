@@ -130,34 +130,32 @@
 <div class="modal-backdrop" id="runModal" hidden>
   <div class="modal">
     <h2>計測設定</h2>
-    <p class="modal-sub">選択した機器の動作を確認してから、同じ条件で性能を測定します。</p>
+    <p class="modal-sub">標準はFP16・INT8、4096×4096、3回測定。正解照合は常に実行します。</p>
     <div class="field">
       <label>機器</label>
-      <label for="optBackend">バックエンド</label>
-      <select id="optBackend"></select>
       <div class="checks" id="targetChecks"></div>
     </div>
-    <div class="field">
-      <label>テスト項目</label>
-      <label for="optSuite">計測セット</label>
-      <select id="optSuite"></select>
-      <div class="checks" id="workloadChecks"></div>
-    </div>
     <div class="field-row">
-      <div class="field"><label>繰り返し回数</label><input type="number" id="optRepeats" min="1" max="10" value="3" /></div>
-      <div class="field"><label>1件あたりの秒数</label><input type="number" id="optSeconds" min="1" max="120" value="4" /></div>
-      <div class="field"><label for="optMode">測定モード</label><select id="optMode"><option value="latency">単発の遅延</option><option value="peak">条件別探索（デバイス間比較不可）</option><option value="throughput">固定負荷の並列測定</option></select></div>
-      <div class="field"><label for="optRequests">並列数（0＝自動探索・NPUは最大32）</label><input type="number" id="optRequests" min="0" max="32" value="0" /></div>
-      <div class="field"><label>CPUスレッド数</label><input type="number" id="optThreads" min="1" max="128" placeholder="physical cores" /></div>
-      <div class="field"><label for="optGemmSize">共通GEMMサイズ（探索時は自動）</label><select id="optGemmSize"><option>512</option><option>1024</option><option selected>2048</option><option>4096</option></select></div>
+      <div class="field"><label for="optGemmSize">共通GEMMサイズ（探索時は自動）</label><select id="optGemmSize"><option>512</option><option>1024</option><option>2048</option><option selected>4096</option></select></div>
+      <div class="field"><label for="optRepeats">繰り返し回数</label><input type="number" id="optRepeats" min="1" max="10" value="3" /></div>
+      <div class="field"><label for="optSeconds">1件あたりの秒数</label><input type="number" id="optSeconds" min="1" max="120" value="4" /></div>
     </div>
-    <div class="field toggles">
-      <label class="toggle"><input type="checkbox" id="optInt8" checked /><span>INT8（軽量化したモデル）も測定する</span></label>
-      <label class="toggle"><input type="checkbox" id="optCheck" checked /><span>CPUの結果と照合して正しさを確認する</span></label>
-      <label class="toggle"><input type="checkbox" id="optPower" checked /><span>消費電力を測定する</span></label>
-      <label class="toggle"><input type="checkbox" id="optBattery" /><span>バッテリー駆動でも実行する</span></label>
-      <label class="toggle"><input type="checkbox" id="optQuick" /><span>簡易測定（3回・各1秒以上）</span></label>
-    </div>
+    <details class="run-advanced">
+      <summary>詳細設定</summary>
+      <div class="field"><label for="optBackend">バックエンドで絞り込む</label><select id="optBackend"></select></div>
+      <div class="field"><label for="optSuite">テスト項目</label><select id="optSuite"></select></div>
+      <p class="modal-sub">対応するINT8モデルは自動で追加します。条件別探索では行列サイズ・並列数を自動調整します。</p>
+      <div class="checks" id="workloadChecks" hidden></div>
+      <div class="field-row">
+        <div class="field" id="modeField"><label for="optMode">実行方法</label><select id="optMode"><option value="latency">1並列で測定</option><option value="throughput">並列で測定</option></select></div>
+        <div class="field" id="requestsField" hidden><label for="optRequests">並列数（0＝自動）</label><input type="number" id="optRequests" min="0" max="32" value="0" /></div>
+        <div class="field"><label for="optThreads">CPUスレッド数</label><input type="number" id="optThreads" min="1" max="128" placeholder="自動（物理コア数）" /></div>
+      </div>
+      <div class="field toggles">
+        <label class="toggle"><input type="checkbox" id="optPower" checked /><span>消費電力を測定する</span></label>
+        <label class="toggle"><input type="checkbox" id="optBattery" /><span>バッテリー駆動でも実行する</span></label>
+      </div>
+    </details>
     <div class="modal-actions">
       <button class="btn ghost" id="cancelRun">キャンセル</button>
       <button class="btn primary" id="confirmRun">計測開始</button>

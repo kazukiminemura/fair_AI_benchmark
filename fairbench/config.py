@@ -23,7 +23,7 @@ class RunConfig:
     # ---- measurement policy ----------------------------------------------
     mode: str = "latency"  # latency | throughput
     requests: int = 0  # throughput: 0 sweeps 1/2/4/8; otherwise fixed concurrency
-    gemm_size: int = 2048
+    gemm_size: int = 4096
     peak_max_size: int = 4096
     resident_io: bool = False
     warmup: int = 5

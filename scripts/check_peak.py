@@ -29,7 +29,7 @@ def main(_available_memory) -> None:
 
     with patch.object(peak, "spawn_worker", side_effect=measured):
         result = peak.search(target, "precision_gemm_int8", cfg)
-    assert cfg.mode == "peak" and cfg.gemm_size == 2048
+    assert cfg.mode == "peak" and cfg.gemm_size == 4096
     assert result["selected"] == {"gemm_size": 2048, "requests": 2, "threads": 12, "resident_io": True}
     assert len(result["trials"]) == len(jobs) and len(jobs) >= 6
     assert all(job["cfg"]["mode"] == "throughput" and job["cfg"]["repeats"] == 1 for job in jobs)
