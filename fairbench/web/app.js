@@ -157,9 +157,21 @@ function renderMeasurementDiagram(host, rows, kind = 'gpu', precision = 'fp16') 
   host.appendChild(el('p', { class: 'measurement-caption' }, 'CPU・NPUも分離時間を取得できた場合だけ括弧内に換算値を表示します。分離できない場合は「分離不可」。デバイス常駐測定では主値も転送を除外します。'));
 }
 function renderDeviceMeasurement(rows) {
-  const host = $('overviewMeasurement');
+  const host = $('deviceMeasurement');
   host.replaceChildren();
   $('measurementTitle').textContent = `${measurementKind.toUpperCase()}の転送と推論`;
+  const devices = el('div', { class: 'measurement-devices', role: 'group', 'aria-label': '時間内訳を表示するデバイス' });
+  for (const kind of ['cpu', 'gpu', 'npu']) {
+    const selector = el('button', { type: 'button', class: 'device-selector',
+      'aria-pressed': String(measurementKind === kind), 'aria-controls': 'deviceMeasurement',
+    }, kind.toUpperCase());
+    selector.addEventListener('click', () => {
+      measurementKind = kind;
+      renderDeviceMeasurement(state.report?.results || []);
+    });
+    devices.appendChild(selector);
+  }
+  host.appendChild(devices);
   for (const precision of ['fp16', 'int8']) {
     const section = el('section', { class: 'measurement-precision' });
     section.appendChild(el('h4', {}, precision.toUpperCase()));
@@ -459,21 +471,7 @@ function renderOverview() {
     const measured = rows.filter((r) => r.kind === kind);
     const card = el('article', { class: 'device-card' + (measured.length ? '' : ' unmeasured'), style: `--accent:${KIND_COLOR[kind]}` });
     const title = el('div', { class: 'device-card-heading' });
-    const heading = el('h3');
-    const selector = el('button', { type: 'button', class: 'device-selector',
-      'data-device-kind': kind,
-      'aria-pressed': String(measurementKind === kind), 'aria-controls': 'overviewMeasurement',
-      title: `${name}の転送・推論時間を表示`,
-    }, name);
-    selector.addEventListener('click', () => {
-      measurementKind = kind;
-      document.querySelectorAll('.device-selector').forEach((button) => {
-        button.setAttribute('aria-pressed', String(button.dataset.deviceKind === kind));
-      });
-      renderDeviceMeasurement(state.report?.results || []);
-    });
-    heading.appendChild(selector);
-    title.appendChild(heading);
+    title.appendChild(el('h3', {}, name));
     card.appendChild(title);
     renderPrecisionRates(card, rep?.results || [], kind);
     card.appendChild(el('a', { class: 'text-link', href: measured.length ? '#performance' : '#devices' },
