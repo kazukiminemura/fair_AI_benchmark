@@ -70,12 +70,12 @@ def check_compute_units() -> None:
     from fairbench.report import format_compute_rate
 
     for kind in ("cpu", "gpu"):
-        assert format_compute_rate({"kind": kind, "flops_per_s": 2e12}) == "2000.0 GFLOPS"
+        assert format_compute_rate({"kind": kind, "flops_per_s": 2e12}) == "2.000 TFLOPS"
     assert format_compute_rate({"kind": "npu", "flops_per_s": 2e12}) == "2.000 TOPS"
     assert format_compute_rate({"kind": "npu", "flops_per_s": 0}) == "0.000 TOPS"
     assert format_compute_rate({"kind": "npu", "flops_per_s": float("nan")}) == "—"
     assert format_compute_rate({"kind": "cpu"}) == "—"
-    print("Compute units passed: CPU/GPU GFLOPS, NPU TOPS, zero/missing values.")
+    print("Compute units passed: CPU/GPU TFLOPS, NPU TOPS, zero/missing values.")
 
 
 def check_windowsml_npu_requirement() -> None:

@@ -97,11 +97,16 @@ class OrtBackend(Backend):
         provider_options = [self._provider_options(target, precision)]
         # Always keep the CPU EP as a silent fallback so a partially assignable
         # graph still runs; unassigned nodes are visible via `fallback_used`.
-        if target.device != "CPUExecutionProvider":
+        if target.device != "CPUExecutionProvider" and not built.key.startswith("precision_gemm_"):
             providers.append("CPUExecutionProvider")
             provider_options.append({})
 
         so = self._session_options(target, cfg)
+        if built.key.startswith("precision_gemm_"):
+            if precision == "int4":
+                raise BackendError("INT4 QDQ GEMM requires verified native INT4 execution; this ONNX Runtime backend cannot verify it. Dequantized FP32 throughput is not reported as INT4 TOPS.")
+            if target.kind != "cpu":
+                so.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
         started = time.perf_counter()
         try:
             session = self.ort.InferenceSession(
@@ -127,6 +132,7 @@ class OrtBackend(Backend):
                 "intra_op_threads": so.intra_op_num_threads,
                 "inter_op_threads": so.inter_op_num_threads,
                 "graph_optimization": "ORT_ENABLE_ALL",
+                "precision_note": "Model input/weight precision; native hardware arithmetic is not verified. FP16 may be emulated by the runtime.",
             },
         )
 

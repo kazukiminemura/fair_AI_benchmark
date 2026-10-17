@@ -45,7 +45,30 @@ function formatComputeRate(row) {
   if (!Number.isFinite(row.flops_per_s)) return '—';
   return row.kind === 'npu'
     ? `${fmt(row.flops_per_s / 1e12, 3)} TOPS`
-    : `${fmt(row.flops_per_s / 1e9, 1)} GFLOPS`;
+    : `${fmt(row.flops_per_s / 1e12, 3)} TFLOPS`;
+}
+function renderPrecisionRates(card, rows, kind) {
+  const precisions = kind === 'npu' ? ['int8', 'int4'] : ['fp16', 'fp8'];
+  if (kind !== 'npu' && rows.some((row) => row.ok && row.kind === kind && row.precision?.toLowerCase() === 'fp32'
+    && Number.isFinite(row.flops_per_s) && row.flops_per_s >= 0)) precisions.unshift('fp32');
+  const unit = kind === 'npu' ? 'TOPS' : 'TFLOPS';
+  for (const precision of precisions) {
+    const matching = rows.filter((row) => row.kind === kind && row.precision?.toLowerCase() === precision);
+    const best = matching.filter((row) => row.ok
+      && Number.isFinite(row.flops_per_s) && row.flops_per_s >= 0)
+      .sort((first, second) => second.flops_per_s - first.flops_per_s)[0];
+    card.appendChild(el('p', { class: 'device-role' }, `${precision.toUpperCase()} · ${unit}`));
+    const failed = matching.find((row) => !row.ok);
+    const failureReason = failed && /Native .*GEMM|NOT_IMPLEMENTED|could not load/.test(failed.error || '')
+      ? 'この機器・ランタイムでは対応する精度の行列演算を実行できません。詳細は測定データを確認してください。'
+      : (failed?.error || 'この機器・ランタイムでは実行できません').slice(0, 140);
+    const value = el('div', { class: 'device-index precision-index' }, best ? fmt(best.flops_per_s / 1e12, 3) : failed ? '実行不可' : '未計測');
+    if (best) value.appendChild(el('small', {}, unit));
+    card.appendChild(value);
+    card.appendChild(el('p', { class: 'device-definition', title: failed?.error || '' }, best
+      ? `${best.workload} · ${best.target_label || best.target_id}`
+      : failed ? `${precision.toUpperCase()}: ${failureReason}` : `${precision.toUpperCase()}の測定値がありません`));
+  }
 }
 function fmtBytes(b) {
   if (!b) return '—';
@@ -289,37 +312,27 @@ function renderOverview() {
   if (rep) status.appendChild(el('a', { href: '#environment' }, '理由を見る →'));
 
   const rows = (rep?.results || []).filter((r) => r.ok);
-  const validRates = rows.filter((r) => Number.isFinite(r.flops_per_s) && r.flops_per_s >= 0);
-  const maxRate = Math.max(0, ...validRates.map((r) => r.flops_per_s));
   const host = $('overviewDevices');
   host.replaceChildren();
   for (const [kind, name] of [['cpu', 'CPU'], ['gpu', 'GPU'], ['npu', 'NPU']]) {
     const measured = rows.filter((r) => r.kind === kind);
-    const best = validRates.filter((r) => r.kind === kind).sort((a, b) => b.flops_per_s - a.flops_per_s)[0];
     const card = el('article', { class: 'device-card' + (measured.length ? '' : ' unmeasured'), style: `--accent:${KIND_COLOR[kind]}` });
     const title = el('div', { class: 'device-card-heading' });
     title.append(el('h3', {}, name), el('span', {}, measured.length ? '計測済み' : '未計測'));
     card.appendChild(title);
-    card.appendChild(el('p', { class: 'device-role' }, kind === 'npu' ? '最高実測TOPS' : '最高実測TFLOPS'));
-    const value = el('div', { class: 'device-index' }, best ? fmt(best.flops_per_s / 1e12, 3) : measured.length ? '値なし' : '未計測');
-    if (best) value.appendChild(el('small', {}, kind === 'npu' ? 'TOPS' : 'TFLOPS'));
-    card.appendChild(value);
-    const meter = el('div', { class: 'device-meter', 'aria-hidden': 'true' });
-    if (best && maxRate > 0) meter.appendChild(el('span', { style: `width:${100 * best.flops_per_s / maxRate}%` }));
-    card.appendChild(meter);
-    card.appendChild(el('p', { class: 'device-definition' }, best
-      ? `${best.workload} · ${best.precision || '精度未記録'}${best.measurement_mode === 'throughput' ? ' · ' + (best.concurrent_requests_per_repeat || []).join('/') + '並列' : ''} · ${best.target_label || best.target_id}`
-      : measured.length ? '演算性能の数値が記録されていません' : '今回の結果には含まれていません'));
-    const target = (rep?.targets || []).find((t) => t.id === best?.target_id);
-    card.appendChild(el('p', { class: 'device-path' }, best ? (target?.detail || best.target_label || best.target_id) : '機器の有無・設定は詳細で確認できます'));
+    renderPrecisionRates(card, rep?.results || [], kind);
+    const discovery = rep?.discovery || state.catalog?.discovery;
+    if (kind === 'npu' && discovery && !discovery.targets?.some((target) => target.kind === 'npu' && target.available)) {
+      card.appendChild(el('p', { class: 'device-path' }, '測定可能なNPUが検出されていません。機器情報で対応状況を確認できます。'));
+    }
     card.appendChild(el('a', { class: 'text-link', href: measured.length ? '#performance' : '#devices' },
       measured.length ? '測定データを見る →' : '対応状況を見る →'));
     host.appendChild(card);
   }
   const total = (rep?.results || []).length;
   $('overviewCoverage').textContent = rep
-    ? `${rows.length}/${total}件成功 · 所要 ${fmtDuration(rep.duration_s)}。選択した結果内の最高実測値です。モデルの演算数からの換算値で、理論ピーク性能ではありません。同じモデル・精度・測定モードで比較してください。`
-    : 'CPU・GPUの最高TFLOPSと、NPUの最高TOPSをここで確認できます。';
+    ? `${rows.length}/${total}件成功 · 所要 ${fmtDuration(rep.duration_s)}。モデル精度ごとの最高実測値です。モデルの演算数からの換算値で、理論ピーク性能ではありません。FP16はランタイムによるエミュレーションを含む場合があります。同じモデル・精度・測定モードで比較してください。精度別負荷は「精度別性能」または標準計測で実行できます。`
+    : 'CPU・GPUはFP16 / FP8のTFLOPS、NPUはINT8 / INT4のTOPSを表示します。「精度別性能」で計測してください。対応しない精度は実行不可の理由を表示します。';
 }
 
 const VIEWS = {
@@ -846,9 +859,9 @@ function buildRunModal() {
     });
   });
   wWrap.innerHTML = '';
-  const defaults = ['dense_gemm', 'conv_vision', 'depthwise_mobile', 'transformer', 'llm_prefill', 'llm_decode'];
+  const defaults = cat.workload_sets?.standard?.workloads || ['dense_gemm', 'conv_vision', 'depthwise_mobile', 'transformer', 'llm_prefill', 'llm_decode'];
   (cat.workloads || []).forEach((w) => {
-    if (w.key === 'dense_static' || (w.key.endsWith('_int8') && w.key !== 'dense_static_int8')) return;
+    if (w.key === 'dense_static' || (w.key.endsWith('_int8') && w.key !== 'dense_static_int8' && w.category !== 'precision')) return;
     const on = defaults.includes(w.key);
     const l = el('label', { class: on ? 'sel' : '', style: '--accent:#2563eb' });
     l.innerHTML = `<input type="checkbox" value="${esc(w.key)}" ${on ? 'checked' : ''} /><span>${esc(w.label || w.key)}</span><span style="color:var(--dim);font-size:11px">${esc(w.category)}</span>`;

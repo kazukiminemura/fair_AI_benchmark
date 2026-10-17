@@ -242,12 +242,12 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
 
     # ---- correctness --------------------------------------------------
     if cfg.check_correctness:
-        base_key = key[: -len("_int8")] if key.endswith("_int8") else key
+        base_key = "precision_gemm" if key.startswith("precision_gemm_") else (key[: -len("_int8")] if key.endswith("_int8") else key)
         ref = reference_fingerprint(base_key, cfg.input_seed)
         try:
             outs = [np.asarray(o) for o in backend.run(compiled, feed)]
             diff = relative_l2(outs, ref) if ref else None
-            tolerance = cfg.relative_tolerance * (5.0 if precision == "int8" else 1.0)
+            tolerance = cfg.relative_tolerance * (5.0 if precision in ("int8", "int4") else 1.0)
             result["correctness"] = {
                 "checked": ref is not None,
                 "relative_l2_error": diff,
