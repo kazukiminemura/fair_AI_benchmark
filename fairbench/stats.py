@@ -58,7 +58,21 @@ def summarise(latencies_ms: list[float]) -> StatSummary:
     values = [v for v in latencies_ms if v is not None and math.isfinite(v)]
     n = len(values)
     if n == 0:
-        return StatSummary(0, *([float("nan")] * 10), 0, float("nan"))
+        return StatSummary(
+            count=0,
+            mean_ms=float("nan"),
+            median_ms=float("nan"),
+            p90_ms=float("nan"),
+            p99_ms=float("nan"),
+            min_ms=float("nan"),
+            max_ms=float("nan"),
+            stdev_ms=float("nan"),
+            cv=float("nan"),
+            mad_ms=float("nan"),
+            outliers=0,
+            iqr_ms=float("nan"),
+            cv_trimmed=float("nan"),
+        )
     ordered = sorted(values)
     mean = sum(values) / n
     var = sum((v - mean) ** 2 for v in values) / (n - 1) if n > 1 else 0.0
@@ -96,7 +110,7 @@ def summarise(latencies_ms: list[float]) -> StatSummary:
 
 
 def median(values: list[float]) -> float:
-    return _percentile(sorted(v for v in values if math.isfinite(v)), 0.5)
+    return _percentile(sorted(v for v in values if v is not None and math.isfinite(v)), 0.5)
 
 
 def geometric_mean(values: list[float]) -> float:

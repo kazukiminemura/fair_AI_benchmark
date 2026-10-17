@@ -55,6 +55,24 @@ function formatInferenceRate(row) {
     || !Number.isFinite(row.flops) || row.flops <= 0) return '分離不可';
   return formatComputeRate({ ...row, flops_per_s: row.flops / (timing.compute_ms / 1000) });
 }
+function precisionRateNote(row, precision) {
+  if (!row) return '';
+  const gpu = row.gpu_precision || row.session?.gpu_precision;
+  const values = [...(gpu?.available ? gpu.tensor_precisions || [] : []),
+    ...(row.compute_precisions || row.session?.compute_precisions || [])].map((value) => value.toLowerCase());
+  if (precision === 'fp16' && values.some((value) => ['float', 'float32', 'f32'].includes(value))) {
+    return 'FP32の報告/入力型を含むFP16モデルの換算値です。ネイティブFP16演算性能ではありません。';
+  }
+  if (precision === 'int8' && (!values.length || values.some((value) => !['int8', 'i8', 'uint8', 'u8'].includes(value)))) {
+    return `INT8モデルの演算数によるTOPS換算値です。確認された型: ${formatExecutionPrecision(row)}。ネイティブINT8演算性能ではありません。`;
+  }
+  return '';
+}
+function gemmShape(row) {
+  if (Array.isArray(row?.gemm_shape) && row.gemm_shape.length === 3) return row.gemm_shape;
+  const size = row?.peak_settings?.gemm_size;
+  return Number.isFinite(size) && size > 0 ? [size, size, size] : null;
+}
 function renderPrecisionRates(card, rows, kind, { details = false } = {}) {
   const precisions = ['fp16', 'int8'];
   for (const precision of precisions) {
@@ -69,6 +87,8 @@ function renderPrecisionRates(card, rows, kind, { details = false } = {}) {
       ? 'この機器・ランタイムでは対応する精度の行列演算を実行できません。詳細は測定データを確認してください。'
       : (failed?.error || 'この機器・ランタイムでは実行できません').slice(0, 140);
     const value = el('div', { class: 'device-index precision-index' }, best ? fmt(best.flops_per_s / 1e12, 3) : failed ? '実行不可' : '未計測');
+    const precisionNote = precisionRateNote(best, precision);
+    if (precisionNote) value.setAttribute('title', precisionNote);
     if (best) {
       value.appendChild(el('small', {}, unit));
       value.appendChild(el('small', { class: 'inference-rate',
@@ -83,7 +103,7 @@ function renderPrecisionRates(card, rows, kind, { details = false } = {}) {
       ? `モデル ${precision.toUpperCase()} / ${(best.gpu_precision || best.session?.gpu_precision)?.available ? '演算入力' : '実行'} ${formatExecutionPrecision(best)} · ${best.target_label || best.target_id} · ${best.repeats_ok || 0}回`
       : failed ? `${precision.toUpperCase()}: ${failureReason}` : `${precision.toUpperCase()}の測定値がありません`));
     if (best) {
-      const shape = best.gemm_shape;
+      const shape = gemmShape(best);
       const convention = best.operation_convention;
       card.appendChild(el('p', { class: 'device-path' }, Array.isArray(shape) && shape.length === 3
         ? `GEMM M×K×N: ${shape.join('×')}（A ${shape[0]}×${shape[1]} / B ${shape[1]}×${shape[2]}）`
@@ -102,9 +122,7 @@ function renderPrecisionRates(card, rows, kind, { details = false } = {}) {
     if (best && !best.correctness_verified) {
       card.appendChild(el('p', { class: 'device-path' }, '参考値：要素単位の正解検証がありません。旧方式の結果は再計測してください。'));
     }
-    if (best && precision === 'fp16' && (best.compute_precisions || []).some((value) => ['float', 'float32', 'f32'].includes(value))) {
-      card.appendChild(el('p', { class: 'device-path' }, 'FP32実行を含むFP16モデルの換算値です。ネイティブFP16演算性能ではありません。'));
-    }
+    if (precisionNote) card.appendChild(el('p', { class: 'device-path' }, precisionNote));
     if (best && kind === 'gpu') {
       const precisionProbe = best.gpu_precision || best.session?.gpu_precision;
       if (!precisionProbe?.available && !(best.compute_precisions || best.session?.compute_precisions || []).length) {
@@ -130,7 +148,7 @@ function renderMeasurementDiagram(host, rows, kind = 'gpu', precision = 'fp16') 
     .sort((first, second) => second.flops_per_s - first.flops_per_s)[0];
   const timing = row?.timing_breakdown;
   const hostBuffers = timing?.transfer_scope === 'host_buffers';
-  const shape = row?.gemm_shape;
+  const shape = gemmShape(row);
   host.appendChild(el('p', { class: 'measurement-caption' }, row
     ? `表示中の${name}・${precision.toUpperCase()}${Array.isArray(shape) ? ` / GEMM ${shape.join('×')}` : ''} · 分離時間は別測定`
     : `${name}・${precision.toUpperCase()}は未計測です`));
@@ -156,7 +174,11 @@ function renderMeasurementDiagram(host, rows, kind = 'gpu', precision = 'fp16') 
   host.appendChild(el('p', { class: 'measurement-caption' }, '括弧内：演算数 ÷ 別測定の推論時間。純粋なカーネル時間ではありません。分離時間は各区間の中央値のため、合計が標準測定時間と一致するとは限りません。'));
   host.appendChild(el('p', { class: 'measurement-caption' }, 'CPU・NPUも分離時間を取得できた場合だけ括弧内に換算値を表示します。分離できない場合は「分離不可」。デバイス常駐測定では主値も転送を除外します。'));
 }
-function renderDeviceMeasurement(rows) {
+function renderDeviceMeasurement(rows, selectedKind) {
+  if (selectedKind) measurementKind = selectedKind;
+  else if (!rows.some((row) => row.ok && row.kind === measurementKind)) {
+    measurementKind = ['gpu', 'cpu', 'npu'].find((kind) => rows.some((row) => row.ok && row.kind === kind)) || measurementKind;
+  }
   const host = $('deviceMeasurement');
   host.replaceChildren();
   $('measurementTitle').textContent = `${measurementKind.toUpperCase()}の転送と推論`;
@@ -166,8 +188,7 @@ function renderDeviceMeasurement(rows) {
       'aria-pressed': String(measurementKind === kind), 'aria-controls': 'deviceMeasurement',
     }, kind.toUpperCase());
     selector.addEventListener('click', () => {
-      measurementKind = kind;
-      renderDeviceMeasurement(state.report?.results || []);
+      renderDeviceMeasurement(state.report?.results || [], kind);
     });
     devices.appendChild(selector);
   }
@@ -203,24 +224,18 @@ function formatExecutionPrecision(row) {
   const names = { f32: 'FP32', float: 'FP32', float32: 'FP32', f16: 'FP16', float16: 'FP16',
     i8: 'INT8', int8: 'INT8', u8: 'UINT8', uint8: 'UINT8', i32: 'INT32', int32: 'INT32' };
   const text = [...new Set(values.map((value) => names[value.toLowerCase()] || value.toUpperCase()))].sort().join('/');
-  if (gpuAssigned) return `${text}（GPU割当グラフ型・内部演算/蓄積は未確認）`;
+  if (gpuAssigned) {
+    const evidence = [gpu.evidence || []].flat();
+    const sources = [];
+    if (evidence.includes('profiled_fused_graph')) sources.push('最適化前ONNXの演算入力型（GPU実行を別途確認）');
+    if (evidence.includes('profiled_compute_inputs')) sources.push('GPUプロファイルの演算入力型');
+    return `${text}（${sources.join(' / ') || 'GPU入力型・取得元未記録'}・内部演算/蓄積は未確認）`;
+  }
   return text + (row.compute_precision_complete === false ? '（一部未確認）' : '（ランタイム報告）');
 }
 function gradeChecks(report) {
-  const successful = (report?.results || []).filter((row) => row.ok);
-  const repeated = successful.length && successful.every((row) => (row.repeats_ok ?? row.repeats?.repeats ?? 0) >= 2);
-  return (report?.grade?.checks || []).map((check) => {
-    if (check.name === 'Correctness' && !report?.measurement_contract) {
-      return { ...check, status: 'warn', detail: '旧方式の正解検証です。要素単位の検証で再計測してください。' };
-    }
-    if (!repeated && check.name === 'Repeatability') {
-      return { ...check, status: 'skip', detail: '独立した成功試行が2回未満のため再現性は判定不可です。3回以上で再測定してください。' };
-    }
-    if (!repeated && check.name === 'Timing stability') {
-      return { ...check, detail: check.detail.split(', but repeats agree')[0] };
-    }
-    return check;
-  });
+  // The stored score and its checks are one verdict; never mix grading policies.
+  return report?.grade?.checks || [];
 }
 function fmtBytes(b) {
   if (!b) return '—';
@@ -422,7 +437,7 @@ function renderRunList() {
         ${r.grade ? `<span class="grade-pill grade-${esc(r.grade)}">${esc(r.grade)}</span>` : ''}
       </div>
       <div class="r-sub"><span>${esc((r.device || '').slice(0, 38))}</span></div>
-      <div class="r-sub"><span>${r.targets || 0} cells</span><span>${fmtDuration(r.duration_s)}</span><span>${ago(r.saved_at)}</span></div>`;
+      <div class="r-sub"><span>${r.targets || 0} 組み合わせ</span><span>${fmtDuration(r.duration_s)}</span><span>${ago(r.saved_at)}</span></div>`;
     btn.onclick = () => { state.hideLive = true; state.followRun = false; openResult(r.file); location.hash = 'overview'; };
     list.appendChild(btn);
   });
@@ -534,7 +549,7 @@ function renderHero(rep) {
     d.innerHTML = `<div class="k">${esc(k)}</div><div class="v">${v}${sub ? ` <small>${esc(sub)}</small>` : ''}</div>`;
     stats.appendChild(d);
   };
-  add('cells', fmtInt(good.length), good.length !== (rep.results || []).length ? `of ${(rep.results || []).length}` : '');
+  add('組み合わせ', fmtInt(good.length), good.length !== (rep.results || []).length ? `of ${(rep.results || []).length}` : '');
   add('devices', fmtInt(new Set(good.map((r) => r.target_id)).size));
   add('duration', fmtDuration(rep.duration_s));
   add('grade', (rep.grade && rep.grade.letter) || '—', rep.grade ? `${rep.grade.score}/100` : '');
@@ -616,6 +631,9 @@ function renderGrade(rep) {
       <div>fairness and validity checks for this run</div>
     </div>`;
   host.appendChild(badge);
+  if (!rep.measurement_contract) {
+    host.appendChild(el('p', { class: 'device-path' }, '保存時のスコアとチェックを表示しています。旧方式の正解検証・再現性判定は現行と異なる場合があります。現行方式で再計測してください。'));
+  }
   requestAnimationFrame(() => {
     const fg = host.querySelector('.ring-fg');
     if (fg) fg.style.strokeDashoffset = String(circ * (1 - Math.max(0, Math.min(1, score / 100))));
@@ -802,7 +820,7 @@ function renderTable(rep) {
     cells.push(dev);
     cells.push(el('td', {}, r.workload));
     cells.push(el('td', { title: `1 MAC = ${r.operation_convention?.operations_per_mac || '未記録'} ops` },
-      r.gemm_shape?.join('×') || (r.workload?.startsWith('precision_gemm') ? '未記録' : '—')));
+      gemmShape(r)?.join('×') || (r.workload?.startsWith('precision_gemm') ? '未記録' : '—')));
     cells.push(el('td', { title: `${r.session?.quantization || ''}; runtime precision: ${JSON.stringify(r.session?.execution_precisions || {})}; parallel requests: ${(r.concurrent_requests_per_repeat || [1]).join('/')}`, html: `<span class="prec">${esc(r.precision || '')}</span>` }));
     cells.push(el('td', { title: (r.compute_precision_sources || []).join('; ') }, formatExecutionPrecision(r)));
     if (!r.ok) {

@@ -98,16 +98,19 @@ console.log('Precision display passed: FP16 TFLOPS and INT8 TOPS on every device
 assert.equal(context.formatExecutionPrecision({ compute_precisions: ['f32'] }), 'FP32（ランタイム報告）');
 assert.equal(context.formatExecutionPrecision({ precision: 'fp16' }), '未確認');
 assert.equal(context.formatExecutionPrecision({ gpu_precision: {
-  available: true, tensor_precisions: ['float16'],
-} }), 'FP16（GPU割当グラフ型・内部演算/蓄積は未確認）');
+  available: true, tensor_precisions: ['float16'], evidence: 'profiled_fused_graph',
+} }), 'FP16（最適化前ONNXの演算入力型（GPU実行を別途確認）・内部演算/蓄積は未確認）');
+assert.equal(context.formatExecutionPrecision({ gpu_precision: {
+  available: true, tensor_precisions: ['float16'], evidence: ['profiled_compute_inputs'],
+} }), 'FP16（GPUプロファイルの演算入力型・内部演算/蓄積は未確認）');
 assert.equal(context.formatExecutionPrecision({ gpu_precision: {
   available: false, tensor_precisions: ['int8'],
 } }), '未確認');
 const probedCard = { children: [], appendChild(child) { this.children.push(child); } };
 context.renderPrecisionRates(probedCard, [{ kind: 'gpu', precision: 'fp16', ok: true, flops_per_s: 2e12,
-  gpu_precision: { available: true, tensor_precisions: ['float16'] },
+  gpu_precision: { available: true, tensor_precisions: ['float16'], evidence: 'profiled_fused_graph' },
 }], 'gpu', { details: true });
-assert(probedCard.children.some((child) => child.textContent.includes('演算入力 FP16（GPU割当グラフ型')));
+assert(probedCard.children.some((child) => child.textContent.includes('演算入力 FP16（最適化前ONNX')));
 assert(!probedCard.children.some((child) => child.textContent.includes('実行 FP16')));
 assert(probedCard.children.some((child) => child.textContent.includes('参考値：要素単位の正解検証がありません')));
 const fallbackCard = { children: [], appendChild(child) { this.children.push(child); } };
@@ -116,6 +119,25 @@ context.renderPrecisionRates(fallbackCard, [{ kind: 'cpu', precision: 'fp16', ok
 }], 'cpu', { details: true });
 assert(fallbackCard.children.some((child) => child.textContent.includes('ネイティブFP16演算性能ではありません')));
 assert(!fallbackCard.children.some((child) => child.textContent.includes('参考値：')));
+assert(context.precisionRateNote({ compute_precisions: ['f32'],
+  gpu_precision: { available: true, tensor_precisions: ['float16'], evidence: 'profiled_fused_graph' } }, 'fp16')
+  .includes('ネイティブFP16演算性能ではありません'));
+for (const evidence of ['profiled_fused_graph', 'profiled_compute_inputs', undefined]) {
+  const int8Row = { kind: 'gpu', precision: 'int8', ok: true, flops_per_s: 2e12, correctness_verified: true,
+    compute_precisions: ['int8'], gpu_precision: { available: true, tensor_precisions: ['float'], evidence } };
+  const int8Card = { children: [], appendChild(child) { this.children.push(child); } };
+  context.renderPrecisionRates(int8Card, [int8Row], 'gpu', { details: true });
+  assert(int8Card.children.some((child) => child.textContent.includes('ネイティブINT8演算性能ではありません')));
+  assert(int8Card.children.some((child) => child.textContent.includes('TOPS換算値')));
+  assert(int8Card.children.some((child) => child.textContent.includes('FP32')));
+  assert(!int8Card.children.some((child) => child.textContent.includes('GPU割当グラフ型')));
+  assert.equal(context.formatComputeRate(int8Row), '2.000 TOPS');
+  const summaryCard = { children: [], appendChild(child) { this.children.push(child); } };
+  context.renderPrecisionRates(summaryCard, [int8Row], 'gpu');
+  assert(summaryCard.children[3].attributes.title.includes('ネイティブINT8演算性能ではありません'));
+}
+assert(context.precisionRateNote({ compute_precisions: ['f32'] }, 'int8').includes('ネイティブINT8'));
+assert.equal(context.precisionRateNote({ compute_precisions: ['int8', 'uint8'] }, 'int8'), '');
 assert.equal(context.formatExecutionPrecision({ compute_precisions: ['i8', 'f32'], compute_precision_complete: false }), 'FP32/INT8（一部未確認）');
 const timedCard = { children: [], appendChild(child) { this.children.push(child); } };
 context.renderPrecisionRates(timedCard, [{ kind: 'gpu', precision: 'fp16', ok: true, flops_per_s: 2e12,
@@ -142,9 +164,22 @@ const oldGrade = { results: [{ ok: true, repeats_ok: 1 }], grade: { checks: [
   { name: 'Repeatability', status: 'pass', detail: 'spread 0%' },
   { name: 'Timing stability', status: 'warn', detail: 'jitter 20%, but repeats agree within 0%, so throughput is stable' },
 ] } };
-assert.equal(context.gradeChecks(oldGrade)[0].status, 'skip');
-assert(!context.gradeChecks(oldGrade)[1].detail.includes('repeats agree'));
-assert.equal(context.gradeChecks({ grade: { checks: [{ name: 'Correctness', status: 'pass' }] } })[0].status, 'warn');
+assert.deepEqual(context.gradeChecks(oldGrade), oldGrade.grade.checks);
+assert.equal(context.gradeChecks(oldGrade)[0].status, 'pass');
+assert(context.gradeChecks(oldGrade)[1].detail.includes('repeats agree'));
+const legacyGrade = { grade: { score: 100, letter: 'A', checks: [{ name: 'Correctness', status: 'pass', detail: 'saved check' }] } };
+const gradeHost = { children: [], appendChild(child) { this.children.push(child); }, querySelector() { return null; } };
+context.document.getElementById = () => gradeHost;
+context.requestAnimationFrame = (handler) => handler();
+context.renderGrade(legacyGrade);
+assert(gradeHost.children[0].innerHTML.includes('100.0'));
+assert(gradeHost.children.some((child) => child.textContent.includes('保存時のスコアとチェック')));
+assert(gradeHost.children.at(-1).children[0].innerHTML.includes('mark pass'));
+assert.equal(legacyGrade.grade.score, 100);
+assert.equal(context.gradeChecks(legacyGrade)[0].status, 'pass');
+gradeHost.children = [];
+context.renderGrade({ ...legacyGrade, measurement_contract: 'element-checks-static-qdq-v2' });
+assert(!gradeHost.children.some((child) => child.textContent.includes('保存時のスコアとチェック')));
 const peakCard = { children: [], appendChild(child) { this.children.push(child); } };
 context.renderPrecisionRates(peakCard, [{ kind: 'gpu', precision: 'fp16', ok: true, flops_per_s: 30e12,
   peak_settings: { gemm_size: 2048, requests: 1, threads: 6 }, peak_candidate_count: 4,
@@ -152,6 +187,10 @@ context.renderPrecisionRates(peakCard, [{ kind: 'gpu', precision: 'fp16', ok: tr
 assert(peakCard.children.some((child) => child.textContent.includes('行列 2048×2048・1並列・6スレッド枠')));
 assert(peakCard.children.some((child) => child.textContent.includes('GPU常駐（入出力転送を除外）')));
 assert(peakCard.children.some((child) => child.textContent.includes('直接比較はできません')));
+assert(peakCard.children.some((child) => child.textContent.includes('GEMM M×K×N: 2048×2048×2048')));
+assert.equal(context.gemmShape({ peak_settings: { gemm_size: 1024 } }).join('×'), '1024×1024×1024');
+assert.equal(context.gemmShape({ gemm_shape: [1, 2, 3], peak_settings: { gemm_size: 1024 } }).join('×'), '1×2×3');
+assert.equal(context.gemmShape({}), null);
 const sizedCard = { children: [], appendChild(child) { this.children.push(child); } };
 const sizedRow = { kind: 'cpu', precision: 'int8', ok: true, flops_per_s: 1e12,
   gemm_size: 2048, gemm_shape: [2048, 2048, 2048], operation_convention: { operations_per_mac: 2, gemm_formula: '2*M*K*N' } };
@@ -172,6 +211,19 @@ assert.equal(detailHeading.textContent, 'CPUの転送と推論');
 assert.equal(detailDiagram.children[0].children[0].attributes['aria-pressed'], 'true');
 detailDiagram.children[0].children[2].handlers.click();
 assert.equal(detailHeading.textContent, 'NPUの転送と推論');
+context.renderDeviceMeasurement([{ kind: 'cpu', precision: 'fp16', ok: true, flops_per_s: 1e12 }]);
+assert.equal(detailHeading.textContent, 'CPUの転送と推論');
+assert.equal(detailDiagram.children[0].children[0].attributes['aria-pressed'], 'true');
+context.renderDeviceMeasurement([{ kind: 'npu', precision: 'int8', ok: true, flops_per_s: 1e12 }]);
+assert.equal(detailHeading.textContent, 'NPUの転送と推論');
+const heroHosts = Object.fromEntries(['heroEyebrow', 'heroTitle', 'heroMeta', 'heroStats'].map((id) =>
+  [id, { children: [], appendChild(child) { this.children.push(child); } }]));
+context.document.getElementById = (id) => heroHosts[id];
+context.renderHero({ results: [{ ok: true }, { ok: true }], cells: Array(6).fill({}), duration_s: 1 });
+assert(heroHosts.heroStats.children[0].innerHTML.includes('組み合わせ'));
+assert(heroHosts.heroStats.children[0].innerHTML.includes('>2<'));
+assert(source.includes('${r.targets || 0} 組み合わせ'));
+console.log('Disclosure checks passed: INT8 conversion/source labels, stored grade pairs, combination labels and legacy/default views.');
 const controls = Object.fromEntries(['optSuite', 'optMode', 'workloadChecks', 'modeField', 'requestsField', 'optGemmSize',
   'optRequests', 'optRepeats', 'optSeconds', 'optThreads', 'optBackend', 'optPower', 'optBattery', 'targetChecks']
   .map((id) => [id, { value: '', checked: false }]));

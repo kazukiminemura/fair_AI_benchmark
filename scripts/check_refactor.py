@@ -149,10 +149,22 @@ def check_windowsml_selection() -> None:
 
 def check_report_json() -> None:
     import threading
+    from http.client import HTTPConnection
     from http.server import ThreadingHTTPServer
     from urllib.request import urlopen
 
     from fairbench import report, server
+
+    for name in (".", "..", "...", "../", "/..", "\\..\\"):
+        try:
+            report.safe_name(name)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"Directory name accepted: {name}")
+    for name in ("", "normal.json", "../result.json", "a/b\\c.json"):
+        cleaned = report.safe_name(name)
+        assert cleaned and cleaned not in (".", "..") and Path(cleaned).name == cleaned
 
     def reject_constant(value):
         raise AssertionError(f"Nonstandard JSON constant: {value}")
@@ -177,13 +189,42 @@ def check_report_json() -> None:
                 with urlopen(f"http://127.0.0.1:{httpd.server_port}/api/result/legacy.json") as response:
                     body = json.loads(response.read().decode("utf-8"), parse_constant=reject_constant)
                 assert body == parsed
+                (root / "directory.json").mkdir()
+                for name in (".", "..", "missing.json", "directory.json"):
+                    connection = HTTPConnection("127.0.0.1", httpd.server_port)
+                    try:
+                        connection.request("GET", f"/api/result/{name}")
+                        response = connection.getresponse()
+                        assert response.status == 404, name
+                        assert json.loads(response.read())["error"] == "not found"
+                    finally:
+                        connection.close()
+                with patch.object(report, "load", side_effect=PermissionError("unreadable")):
+                    connection = HTTPConnection("127.0.0.1", httpd.server_port)
+                    try:
+                        connection.request("GET", "/api/result/legacy.json")
+                        response = connection.getresponse()
+                        assert response.status == 404
+                        assert json.loads(response.read())["error"] == "not found"
+                    finally:
+                        connection.close()
+                for name in (".", ".."):
+                    connection = HTTPConnection("127.0.0.1", httpd.server_port)
+                    try:
+                        connection.request("POST", "/api/delete", body=json.dumps({"file": name}),
+                                           headers={"Content-Type": "application/json"})
+                        response = connection.getresponse()
+                        assert response.status == 404
+                        assert not json.loads(response.read())["ok"]
+                    finally:
+                        connection.close()
             finally:
                 httpd.shutdown()
                 httpd.server_close()
                 thread.join()
         legacy.write_text(json.dumps(data, ensure_ascii=False), encoding="cp932")
         assert report.load(legacy) == parsed
-    print("Report JSON checks passed: strict JSON, legacy NaN/Infinity, Japanese encoding, actual result API.")
+    print("Report JSON checks passed: strict JSON, legacy NaN/Infinity, Japanese encoding, result API, dot paths/missing/unreadable return 404.")
 
 
 def check_throughput() -> None:

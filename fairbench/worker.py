@@ -30,6 +30,7 @@ from .backends import BackendError, get_backend
 from .config import RunConfig
 from .devices import Target
 from .power import PowerSampler
+from .report import json_safe
 from .stats import summarise
 
 RESULT_MARKER = "@@FAIRBENCH-RESULT@@"
@@ -421,17 +422,17 @@ def main(argv: list[str]) -> int:
             "error": f"worker crashed: {type(exc).__name__}: {exc}",
             "traceback": traceback.format_exc()[-2000:],
         }
-    out_path.write_text(json.dumps(result, default=_json_default))
+    out_path.write_text(json.dumps(json_safe(result), default=_json_default, allow_nan=False))
     return 0
 
 
 def _json_default(obj: Any) -> Any:
-    if isinstance(obj, (np.floating, np.integer)):
-        return obj.item()
+    if isinstance(obj, np.floating):
+        return json_safe(float(obj))
+    if isinstance(obj, np.integer):
+        return int(obj)
     if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
-        return None
+        return json_safe(obj.tolist())
     return str(obj)
 
 
