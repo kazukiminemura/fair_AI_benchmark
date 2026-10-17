@@ -143,7 +143,7 @@
     <div class="field-row">
       <div class="field"><label>繰り返し回数</label><input type="number" id="optRepeats" min="1" max="10" value="3" /></div>
       <div class="field"><label>1件あたりの秒数</label><input type="number" id="optSeconds" min="1" max="120" value="4" /></div>
-      <div class="field"><label for="optMode">測定モード</label><select id="optMode"><option value="latency">単発の遅延</option><option value="throughput">最大スループット</option></select></div>
+      <div class="field"><label for="optMode">測定モード</label><select id="optMode"><option value="peak">最大スループット（負荷・並列数を探索）</option><option value="latency">単発の遅延</option><option value="throughput">固定負荷の並列測定</option></select></div>
       <div class="field"><label for="optRequests">並列数（0＝自動探索・NPUは最大32）</label><input type="number" id="optRequests" min="0" max="32" value="0" /></div>
       <div class="field"><label>CPUスレッド数</label><input type="number" id="optThreads" min="1" max="128" placeholder="physical cores" /></div>
     </div>

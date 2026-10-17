@@ -39,12 +39,16 @@ def default_name(prefix: str = "fairbench") -> str:
 
 
 def format_execution_precision(row: dict[str, Any]) -> str:
-    values = row.get("compute_precisions", (row.get("session") or {}).get("compute_precisions", []))
+    gpu = row.get("gpu_precision", (row.get("session") or {}).get("gpu_precision", {}))
+    gpu_assigned = gpu.get("available") and gpu.get("tensor_precisions")
+    values = gpu["tensor_precisions"] if gpu_assigned else row.get("compute_precisions", (row.get("session") or {}).get("compute_precisions", []))
     names = {"f32": "FP32", "float": "FP32", "float32": "FP32", "f16": "FP16", "float16": "FP16",
              "i8": "INT8", "int8": "INT8", "u8": "UINT8", "uint8": "UINT8", "i32": "INT32", "int32": "INT32"}
     if not values:
         return "unverified"
     text = "/".join(sorted({names.get(value.lower(), value.upper()) for value in values}))
+    if gpu_assigned:
+        return text + " (GPU-assigned graph operands; native arithmetic/accumulator unverified)"
     return text if row.get("compute_precision_complete", True) else text + " (partially unverified)"
 
 

@@ -12,6 +12,7 @@ from fairbench.backends.base import CompiledModel
 from fairbench.backends.ort_backend import OrtBackend
 from fairbench.config import RunConfig
 from fairbench.devices import Target
+from fairbench.models import build_precision_gemm
 from fairbench.report import format_execution_precision
 from fairbench.runner import _aggregate, _grade
 from fairbench.stats import summarise_repeats
@@ -56,6 +57,32 @@ def main() -> None:
     session.run.return_value = [output]
     compiled = CompiledModel(session, 0, "fp16", ["y"])
     target = Target("gpu", "ort", "DmlExecutionProvider", "gpu", "unknown", "GPU")
+    event = {"cat": "Node", "name": "DmlFusedNode_0_0_kernel_time", "args": {
+        "provider": target.device, "op_name": "DmlFusedNode_0_0", "input_type_shape": [{"float": [512, 512]}]}}
+    for precision, dtype in (("fp16", "float16"), ("int8", "int8")):
+        evidence = backend._gpu_precision_evidence(build_precision_gemm(precision, 512), target, [event])
+        assert evidence["available"] and evidence["tensor_precisions"] == [dtype]
+        assert evidence["arithmetic_precision"] == "unverified"
+        assert evidence["accumulator_precision"] == "unverified"
+        assert evidence["evidence"] == "profiled_fused_graph"
+    cpu_event = deepcopy(event)
+    cpu_event["args"]["provider"] = "CPUExecutionProvider"
+    built = build_precision_gemm("fp16", 512)
+    for events in ([], [cpu_event], [event, cpu_event], [event, event]):
+        assert not backend._gpu_precision_evidence(built, target, events)["available"]
+    direct = deepcopy(event)
+    direct["args"].update(op_name="MatMul", input_type_shape=[{"float16": [512, 512]}, {"float16": [512, 512]}])
+    assert backend._gpu_precision_evidence(built, target, [direct])["tensor_precisions"] == ["float16"]
+    direct["args"]["input_type_shape"] = [{"float16": [512, 512]}]
+    assert not backend._gpu_precision_evidence(built, target, [direct])["available"]
+    gpu_cell = deepcopy(cell)
+    gpu_cell["session"] = {"gpu_precision": evidence}
+    gpu_triple = _aggregate([gpu_cell, deepcopy(gpu_cell), deepcopy(gpu_cell)])[0]
+    assert gpu_triple["gpu_precision"]["repeats_measured"] == 3
+    assert "INT8 (GPU-assigned graph operands" in format_execution_precision(gpu_triple)
+    missing = deepcopy(gpu_cell)
+    missing["session"] = {}
+    assert not _aggregate([gpu_cell, missing])[0]["gpu_precision"]["available"]
     with patch.object(backend.ort.OrtValue, "ortvalue_from_numpy", return_value=MagicMock()):
         timing = backend.diagnose(compiled, SimpleNamespace(precision="fp16"), target, RunConfig(), {"x": output})
     assert timing["available"] and timing["samples"] >= 10

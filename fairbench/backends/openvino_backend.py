@@ -187,3 +187,17 @@ class OpenVinoBackend(Backend):
         result = compiled.handle(inputs, share_outputs=False)
         names = compiled.output_names
         return [np.asarray(result[name]) for name in names]
+
+    def prepare_resident(self, compiled: CompiledModel, feed: dict[str, np.ndarray], target: Target):
+        request = compiled.handle.create_infer_request()
+        tensors = {name: self.ov.Tensor(np.ascontiguousarray(value), shared_memory=True) for name, value in feed.items()}
+        for name, tensor in tensors.items():
+            request.set_tensor(name, tensor)
+
+        def run(inputs=tensors):
+            request.infer(share_outputs=True)
+
+        def outputs():
+            return [np.asarray(request.get_tensor(name).data).copy() for name in compiled.output_names]
+
+        return run, outputs

@@ -129,6 +129,7 @@ def _config_from_args(args: argparse.Namespace) -> RunConfig:
         cfg.min_seconds = 1.0
         cfg.max_seconds = 15.0
         cfg.repeats = 3
+        cfg.peak_max_size = 2048
         cfg.cooldown_seconds = 0.5
     if args.full:
         cfg.warmup = 8
@@ -144,7 +145,10 @@ def _config_from_args(args: argparse.Namespace) -> RunConfig:
 
 def _print_progress(ev: dict) -> None:
     kind = ev.get("event")
-    if kind == "verify":
+    if kind == "tuning":
+        rate = (ev.get("flops_per_s") or 0) / 1e12
+        print(f"  [tune] {ev['target']} {ev['workload']} {ev['size']} square / {ev['requests']} requests / {ev['threads']} threads: {rate:.3f} T-op/s {'ok' if ev['ok'] else 'failed'}", flush=True)
+    elif kind == "verify":
         mark = c(" ok ", GREEN) if ev["ok"] else c("fail", RED)
         suffix = "" if ev["ok"] else f"  {c(str(ev.get('error')).splitlines()[0][:90], DIM)}"
         print(f"  [{mark}] verify {ev['target']}{suffix}")
@@ -571,8 +575,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="run the benchmark suite")
     p_run.add_argument("--backend", choices=["all", "ort", "openvino", "winml"], default="all", help="runtime to benchmark (default: all available)")
-    p_run.add_argument("--suite", choices=list(WORKLOAD_SETS), default="standard", help="measurement workload set; --workloads overrides it")
-    p_run.add_argument("--mode", choices=["latency", "throughput"], default="latency")
+    p_run.add_argument("--suite", choices=list(WORKLOAD_SETS), default="peak", help="measurement workload set; --workloads overrides it")
+    p_run.add_argument("--mode", choices=["latency", "throughput", "peak"], default="latency")
     p_run.add_argument("--requests", type=int, choices=range(33), default=0, metavar="0..32", help="throughput concurrency; 0 sweeps 1/2/4/8 (NPU also 16/32)")
     p_run.add_argument("--targets", nargs="*", default=None, help="target ids from `fairbench devices`")
     p_run.add_argument("--workloads", nargs="*", default=None, help="workload keys (default: a representative set)")

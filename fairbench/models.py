@@ -587,8 +587,8 @@ def build_llm_decode() -> BuiltModel:
 # --------------------------------------------------------------------------
 # registry
 # --------------------------------------------------------------------------
-def build_precision_gemm(precision: str = "fp32") -> BuiltModel:
-    rows, inner, columns = 512, 1024, 1024
+def build_precision_gemm(precision: str = "fp32", size: int = 0) -> BuiltModel:
+    rows, inner, columns = (size, size, size) if size else (512, 1024, 1024)
     key = "precision_gemm" + ("" if precision == "fp32" else f"_{precision}")
     weight = numpy_helper.to_array(_w("weight", (inner, columns), 1 / math.sqrt(inner), 8101))
     inputs = [_vi("x", [rows, inner])]
@@ -639,7 +639,7 @@ def build_precision_gemm(precision: str = "fp32") -> BuiltModel:
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", opset)])
     model.ir_version = 10 if opset >= 21 else 8
     onnx.checker.check_model(model)
-    return BuiltModel(key, f"512x1024x1024 GEMM, {precision.upper()} inputs and weights", model,
+    return BuiltModel(key, f"{rows}x{inner}x{columns} GEMM, {precision.upper()} inputs and weights", model,
                       2 * rows * inner * columns, "sample", precision)
 
 
@@ -705,7 +705,7 @@ def build_all(include_int8: bool = True) -> dict[str, BuiltModel]:
     return models
 
 
-def build_one(key: str) -> BuiltModel:
+def build_one(key: str, gemm_size: int = 0) -> BuiltModel:
     """Rebuild a single graph by key.
 
     Workers call this instead of receiving a pickled graph: regenerating from
@@ -714,6 +714,8 @@ def build_one(key: str) -> BuiltModel:
     """
     if key == "smoke":
         return build_smoke()
+    if gemm_size and (key == "precision_gemm" or key in {f"precision_gemm_{precision}" for precision in ("fp16", "fp8", "int8", "int4")}):
+        return build_precision_gemm("fp32" if key == "precision_gemm" else key.rsplit("_", 1)[-1], gemm_size)
     if key in BASE_BUILDERS:
         return BASE_BUILDERS[key]()
     if key.endswith("_int8"):

@@ -56,13 +56,13 @@ def _reference_path(sha: str, seed: int, shape: tuple) -> Path:
     return cache / f"{sha[:16]}-{seed}-{','.join(map(str, shape))}.json"
 
 
-def reference_fingerprint(base_key: str, seed: int) -> dict[str, Any] | None:
+def reference_fingerprint(base_key: str, seed: int, gemm_size: int = 0) -> dict[str, Any] | None:
     """Ground truth for a workload: the float32 graph, on ONNX Runtime's CPU EP.
 
     Using ORT CPU as the reference is deliberate - it is the one path that
     behaves identically on Intel and AMD silicon, so it cannot favour a vendor.
     """
-    built = models.build_one(base_key)
+    built = models.build_one(base_key, gemm_size)
     shape = tuple(d.dim_value for d in built.model.graph.output[0].type.tensor_type.shape.dim)
     path = _reference_path(built.sha256, seed, shape)
     if path.exists():
@@ -110,7 +110,15 @@ def _run_throughput(backend, compiled, built, target, cfg, feed, result, job):
                 runners = []
                 lane_cfg = replace(cfg, threads=max(1, cfg.resolve_threads() // count))
                 for _ in range(0 if target.device == "DmlExecutionProvider" else count):
-                    if target.backend == "openvino":
+                    if cfg.resident_io:
+                        model = compiled if target.backend == "openvino" else backend.compile(built, target, lane_cfg, job.get("precision", "fp32"))
+                        run, read_outputs = backend.prepare_resident(model, feed, target)
+                        expected = backend.run(model, feed)
+                        run()
+                        for actual, reference in zip(read_outputs(), expected, strict=True):
+                            if not np.allclose(actual, reference, rtol=1e-3, atol=1e-3):
+                                raise BackendError("Persistent inference output validation failed.")
+                    elif target.backend == "openvino":
                         # CompiledModel.__call__ shares a cached InferRequest;
                         # explicit requests avoid sharing mutable request state.
                         request = compiled.handle.create_infer_request()
@@ -200,7 +208,7 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
     started = time.perf_counter()
 
     try:
-        built = models.build_one(key)
+        built = models.build_one(key, cfg.gemm_size)
     except Exception as exc:
         result["error"] = f"could not build workload: {exc}"
         return result
@@ -243,7 +251,7 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
     # ---- correctness --------------------------------------------------
     if cfg.check_correctness:
         base_key = "precision_gemm" if key.startswith("precision_gemm_") else (key[: -len("_int8")] if key.endswith("_int8") else key)
-        ref = reference_fingerprint(base_key, cfg.input_seed)
+        ref = reference_fingerprint(base_key, cfg.input_seed, cfg.gemm_size)
         try:
             outs = [np.asarray(o) for o in backend.run(compiled, feed)]
             diff = relative_l2(outs, ref) if ref else None

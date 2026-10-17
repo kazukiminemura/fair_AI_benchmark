@@ -120,7 +120,7 @@ def _run_thread(options: dict[str, Any]) -> None:
         quick = bool(options.get("quick"))
         cfg = RunConfig(
             backend=str(options.get("backend", "all")),
-            suite=str(options.get("suite", "custom" if options.get("workloads") else "standard")),
+            suite=str(options.get("suite", "custom" if options.get("workloads") else "peak")),
             mode=str(options.get("mode", "latency")),
             requests=int(options.get("requests", 0)),
             warmup=2 if quick else 5,
@@ -132,6 +132,7 @@ def _run_thread(options: dict[str, Any]) -> None:
             measure_power=bool(options.get("measure_power", True)),
             allow_battery=bool(options.get("allow_battery", False)),
             check_correctness=bool(options.get("check_correctness", True)),
+            peak_max_size=2048 if quick else 4096,
             include_int8=bool(options.get("include_int8", True)),
             threads=options.get("threads"),
         )

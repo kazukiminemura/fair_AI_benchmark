@@ -10,6 +10,7 @@ suite.
 from __future__ import annotations
 
 import json
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,8 @@ from .base import Backend, BackendError, CompiledModel
 class OrtBackend(Backend):
     id = "ort"
     name = "ONNX Runtime"
+    _IO_DEVICES = {"DmlExecutionProvider": "dml", "CUDAExecutionProvider": "cuda",
+                   "ROCMExecutionProvider": "cuda", "CPUExecutionProvider": "cpu"}
 
     @staticmethod
     def is_installed() -> bool:
@@ -142,22 +145,43 @@ class OrtBackend(Backend):
     def run(self, compiled: CompiledModel, feed: dict[str, np.ndarray]) -> list[np.ndarray]:
         return compiled.handle.run(None, feed)
 
+    def prepare_resident(self, compiled: CompiledModel, feed: dict[str, np.ndarray], target: Target):
+        if target.device not in self._IO_DEVICES:
+            return super().prepare_resident(compiled, feed, target)
+        binding, tensors = self._resident_binding(compiled, feed, target, warmup=1)
+
+        def run(inputs=tensors):
+            compiled.handle.run_with_iobinding(binding)
+            binding.synchronize_outputs()
+
+        return run, binding.copy_outputs_to_cpu
+
+    def _resident_binding(self, compiled: CompiledModel, feed: dict[str, np.ndarray],
+                          target: Target, warmup: int):
+        device = self._IO_DEVICES[target.device]
+        device_id = int(self._provider_options(target, compiled.precision).get("device_id", 0))
+        binding = compiled.handle.io_binding()
+        tensors = {name: self.ort.OrtValue.ortvalue_from_numpy(np.ascontiguousarray(value), device, device_id)
+                   for name, value in feed.items()}
+        for name, value in tensors.items():
+            binding.bind_ortvalue_input(name, value)
+        for name in compiled.output_names:
+            binding.bind_output(name, device, device_id)
+        for _ in range(warmup):
+            compiled.handle.run_with_iobinding(binding)
+            binding.synchronize_outputs()
+        for name, value in zip(compiled.output_names, binding.get_outputs(), strict=True):
+            binding.bind_ortvalue_output(name, value)
+
+        return binding, tensors
+
     def diagnose(self, compiled: CompiledModel, built: BuiltModel, target: Target,
                  cfg: RunConfig, feed: dict[str, np.ndarray]) -> dict[str, Any]:
         compiled.meta["compute_precisions"] = []
         compiled.meta["compute_precision_source"] = "Runtime does not expose arithmetic precision."
         if target.kind == "cpu":
-            profile_path = None
             try:
-                options = self._session_options(target, cfg)
-                options.enable_profiling = True
-                directory = Path(".cache") / "profiles"
-                directory.mkdir(parents=True, exist_ok=True)
-                options.profile_file_prefix = str(directory / "precision")
-                session = self.ort.InferenceSession(built.serialise(), options, providers=[target.device])
-                session.run(None, feed)
-                profile_path = Path(session.end_profiling())
-                events = json.loads(profile_path.read_text(encoding="utf-8"))
+                events = self._profile_events(built, target, cfg, feed)
                 types = set()
                 for event in events:
                     arguments = event.get("args", {})
@@ -170,28 +194,12 @@ class OrtBackend(Backend):
                 compiled.meta["compute_precision_source"] = "ORT CPU compute-node input types; instruction/accumulator precision unverified"
             except Exception as exc:
                 compiled.meta["compute_precision_source"] = f"Precision probe unavailable: {exc}"
-            finally:
-                if profile_path is not None:
-                    profile_path.unlink(missing_ok=True)
             return {"available": False, "reason": "CPU execution has no host/GPU transfer phases."}
-        device = {"DmlExecutionProvider": "dml", "CUDAExecutionProvider": "cuda",
-                  "ROCMExecutionProvider": "cuda"}.get(target.device)
-        if target.kind != "gpu" or device is None:
+        if target.kind != "gpu" or target.device not in self._IO_DEVICES:
             return {"available": False, "reason": "Device-resident I/O binding is unavailable for this provider."}
+        compiled.meta["gpu_precision"] = self._probe_gpu_precision(built, target, cfg, feed)
         try:
-            device_id = int(self._provider_options(target, built.precision).get("device_id", 0))
-            binding = compiled.handle.io_binding()
-            tensors = {name: self.ort.OrtValue.ortvalue_from_numpy(np.ascontiguousarray(value), device, device_id)
-                       for name, value in feed.items()}
-            for name, value in tensors.items():
-                binding.bind_ortvalue_input(name, value)
-            for name in compiled.output_names:
-                binding.bind_output(name, device, device_id)
-            for _ in range(max(2, cfg.warmup)):
-                compiled.handle.run_with_iobinding(binding)
-                binding.synchronize_outputs()
-            for name, value in zip(compiled.output_names, binding.get_outputs(), strict=True):
-                binding.bind_ortvalue_output(name, value)
+            binding, tensors = self._resident_binding(compiled, feed, target, warmup=max(2, cfg.warmup))
             reference = compiled.handle.run(None, feed)
             phases = {"h2d_ms": [], "compute_ms": [], "d2h_ms": []}
             sample_count = max(10, min(30, cfg.min_iterations))
@@ -217,3 +225,74 @@ class OrtBackend(Backend):
                     "note": "Synchronized host wall time, not GPU event/kernel time. Compute includes dispatch, synchronization, casts and quantization; model weights and I/O allocations are already resident. End-to-end inference is measured separately."}
         except Exception as exc:
             return {"available": False, "reason": f"I/O binding timing unavailable: {exc}"}
+
+    def _probe_gpu_precision(self, built: BuiltModel, target: Target, cfg: RunConfig,
+                             feed: dict[str, np.ndarray]) -> dict[str, Any]:
+        try:
+            return self._gpu_precision_evidence(built, target, self._profile_events(built, target, cfg, feed))
+        except Exception as exc:
+            return {"available": False, "reason": f"GPU precision probe unavailable: {exc}"}
+
+    def _profile_events(self, built: BuiltModel, target: Target, cfg: RunConfig,
+                        feed: dict[str, np.ndarray]) -> list[dict[str, Any]]:
+        with tempfile.TemporaryDirectory(prefix="fairbench-precision-") as directory:
+            options = self._session_options(target, cfg)
+            options.enable_profiling = True
+            options.profile_file_prefix = str(Path(directory) / "precision")
+            provider_options = {}
+            if target.kind == "gpu":
+                options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
+                provider_options["provider_options"] = [self._provider_options(target, built.precision)]
+            session = self.ort.InferenceSession(built.serialise(), options, providers=[target.device], **provider_options)
+            try:
+                session.run(None, feed)
+            finally:
+                profile_path = session.end_profiling()
+            return json.loads(Path(profile_path).read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _gpu_precision_evidence(built: BuiltModel, target: Target,
+                                events: list[dict[str, Any]]) -> dict[str, Any]:
+        import onnx
+
+        kernels = [event.get("args", {}) for event in events
+                   if event.get("cat") == "Node" and event.get("name", "").endswith("_kernel_time")]
+        if not kernels or any(kernel.get("provider") != target.device for kernel in kernels):
+            return {"available": False, "reason": "Profile did not confirm exclusive execution on the requested GPU provider."}
+        operators = {"MatMul", "Gemm", "FusedMatMul", "MatMulInteger", "QLinearMatMul"}
+        nodes = [kernel for kernel in kernels if kernel.get("op_name") in operators]
+        types = set()
+        evidence = "profiled_compute_inputs"
+        if nodes:
+            for node in nodes:
+                inputs = node.get("input_type_shape", [])
+                for index in ((0, 3) if node["op_name"] == "QLinearMatMul" else (0, 1)):
+                    if index >= len(inputs) or not inputs[index]:
+                        return {"available": False, "reason": "Profile omitted a compute operand type."}
+                    types.update(inputs[index])
+            if len(nodes) != len([node for node in built.model.graph.node if node.op_type in operators]):
+                return {"available": False, "reason": "Profile does not expose every compute operator."}
+        elif (len(kernels) == 1 and kernels[0].get("op_name", "").startswith("DmlFusedNode")
+              and built.key.startswith("precision_gemm_")):
+            graph = onnx.shape_inference.infer_shapes(built.model).graph
+            tensor_types = {value.name: value.type.tensor_type.elem_type
+                            for value in [*graph.input, *graph.value_info, *graph.output]}
+            tensor_types.update({value.name: value.data_type for value in graph.initializer})
+            nodes = [node for node in graph.node if node.op_type in operators]
+            if len(nodes) != 1:
+                return {"available": False, "reason": "Fused precision graph must contain exactly one compute operator."}
+            for node in nodes:
+                for index in ((0, 3) if node.op_type == "QLinearMatMul" else (0, 1)):
+                    dtype = tensor_types.get(node.input[index])
+                    if not dtype:
+                        return {"available": False, "reason": "Assigned graph omitted a compute operand type."}
+                    types.add(onnx.TensorProto.DataType.Name(dtype).lower())
+            evidence = "profiled_fused_graph"
+        if not types:
+            return {"available": False, "reason": "GPU profile did not expose supported compute operators."}
+        return {"available": True, "provider": target.device, "tensor_precisions": sorted(types),
+                "evidence": evidence, "profiled_operators": [kernel.get("op_name") for kernel in kernels],
+                "arithmetic_precision": "unverified", "accumulator_precision": "unverified",
+                "note": "GPU provider assignment verified in a separate session with identical model/options. "
+                        "Types describe compute operands in the assigned graph, not native GPU instructions or accumulator precision. "
+                        "Fused graph boundary input/output types are not used as compute precision."}
