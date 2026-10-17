@@ -149,5 +149,5 @@ def summarise_repeats(units_per_s: list[float], medians_ms: list[float]) -> Repe
         best_units_per_s=max(clean),
         median_units_per_s=med,
         worst_units_per_s=min(clean),
-        spread_pct=(max(clean) - min(clean)) / med * 100 if med else float("nan"),
+        spread_pct=(max(clean) - min(clean)) / med * 100 if len(clean) >= 2 and med else float("nan"),
     )

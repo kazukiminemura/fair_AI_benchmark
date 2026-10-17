@@ -90,7 +90,7 @@ def _catalog(force: bool = False) -> dict[str, Any]:
             "defaults": {
                 "repeats": 3,
                 "min_seconds": 4.0,
-                "quick": {"repeats": 1, "min_seconds": 1.0},
+                "quick": {"repeats": 3, "min_seconds": 1.0},
             },
         }
     return _CATALOG_CACHE
@@ -127,7 +127,7 @@ def _run_thread(options: dict[str, Any]) -> None:
             min_iterations=5 if quick else 15,
             min_seconds=1.0 if quick else float(options.get("min_seconds", 4.0)),
             max_seconds=15.0 if quick else float(options.get("max_seconds", 45.0)),
-            repeats=1 if quick else int(options.get("repeats", 3)),
+            repeats=3 if quick else int(options.get("repeats", 3)),
             cooldown_seconds=0.5 if quick else 3.0,
             measure_power=bool(options.get("measure_power", True)),
             allow_battery=bool(options.get("allow_battery", False)),

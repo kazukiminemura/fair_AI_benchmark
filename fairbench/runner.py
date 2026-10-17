@@ -37,23 +37,14 @@ ProgressFn = Callable[[dict[str, Any]], None]
 # workloads
 # --------------------------------------------------------------------------
 DEFAULT_WORKLOADS = [
-    "llm_decode",
-    "dense_gemm",
-    "depthwise_mobile",
-    "conv_vision",
-    "transformer",
-    "llm_prefill",
     "precision_gemm_fp16",
-    "precision_gemm_fp8",
     "precision_gemm_int8",
-    "precision_gemm_int4",
 ]
 
 WORKLOAD_SETS = {
-    "precision": {"label": "精度別性能（FP16・FP8 / INT8・INT4）", "workloads": [
-        "precision_gemm_fp16", "precision_gemm_fp8", "precision_gemm_int8", "precision_gemm_int4"]},
+    "precision": {"label": "精度別性能（FP16・INT8）", "workloads": DEFAULT_WORKLOADS},
     "npu_peak": {"label": "NPU向け INT8・並列測定", "workloads": ["dense_static_int8"]},
-    "standard": {"label": "標準（全モデル）", "workloads": DEFAULT_WORKLOADS},
+    "standard": {"label": "標準（全デバイスでFP16・INT8）", "workloads": DEFAULT_WORKLOADS},
     "compute": {"label": "行列計算", "workloads": ["dense_gemm"]},
     "vision": {"label": "画像処理", "workloads": ["conv_vision", "depthwise_mobile"]},
     "nlp": {"label": "Transformer", "workloads": ["transformer"]},
@@ -63,7 +54,7 @@ WORKLOAD_SETS = {
 WORKLOAD_META: dict[str, dict[str, str]] = {
     **{f"precision_gemm_{precision}": {"label": f"行列計算（{precision.upper()}）", "category": "precision",
        "blurb": "精度別GEMM。対応しないランタイムでは失敗理由を記録します。"}
-       for precision in ("fp16", "fp8", "int8", "int4")},
+       for precision in ("fp16", "int8")},
     "dense_static": {"category": "dense", "blurb": "Static INT8 calibration source (same MLP as dense_gemm)."},
     "dense_static_int8": {"label": "行列計算（静的INT8）", "category": "quantised", "blurb": "入力と重みを事前にINT8量子化した行列計算です。"},
     "dense_gemm": {"category": "dense", "blurb": "Wide MLP; pure matrix throughput. The NPU's home turf."},
@@ -271,10 +262,6 @@ def run_suite(
     for repeat in range(max(1, cfg.repeats)):
         for workload in workload_names:
             for target in runnable:
-                if workload.startswith("precision_gemm_") and (
-                    (target.kind == "npu") != (precision_of(workload) in ("int8", "int4"))
-                ):
-                    continue
                 schedule.append((repeat, target, workload))
 
     total = len(schedule)
@@ -403,7 +390,7 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "units_per_s": rep.median_units_per_s,
                 "units_per_s_best": rep.best_units_per_s,
                 "units_per_s_worst": rep.worst_units_per_s,
-                "repeat_spread_pct": rep.spread_pct,
+                "repeat_spread_pct": rep.spread_pct if rep.repeats >= 2 else None,
                 "flops_per_s": (model_info.get("flops") or 0) * rep.median_units_per_s
                 if rep.median_units_per_s == rep.median_units_per_s
                 else None,
@@ -412,6 +399,21 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "repeats": rep.to_dict(),
             }
         )
+        precision_sets = [set((cell.get("session") or {}).get("compute_precisions", [])) for cell in good]
+        row["compute_precisions"] = sorted(set.union(*precision_sets)) if precision_sets else []
+        row["compute_precision_complete"] = bool(precision_sets) and all(precision_sets)
+        row["compute_precision_sources"] = sorted({(cell.get("session") or {}).get("compute_precision_source", "unavailable") for cell in good})
+        timings = [cell.get("timing_breakdown", {}) for cell in good]
+        available_timings = [timing for timing in timings if timing.get("available")]
+        row["timing_breakdown"] = {
+            "available": bool(available_timings) and len(available_timings) == len(good),
+            "repeats_measured": len(available_timings),
+            "repeats": timings,
+            **{name: median([timing[name] for timing in available_timings]) if available_timings else None
+               for name in ("h2d_ms", "compute_ms", "d2h_ms")},
+            "method": available_timings[0].get("method") if available_timings else None,
+            "note": available_timings[0].get("note") if available_timings else timings[0].get("reason"),
+        }
         if power_ok:
             watts = [p["average_watts"] for p in power_ok if p.get("average_watts")]
             row["power"] = {
@@ -549,8 +551,10 @@ def _grade(report: dict[str, Any], fp: system.SystemFingerprint, cfg: RunConfig)
     # repeat consistency. This is the *decisive* stability signal: independent
     # repeats of the same work bracket everything from thermal drift to a
     # background update, which in-loop jitter cannot see.
-    spreads = [r.get("repeat_spread_pct") for r in report["results"] if r.get("ok") and r.get("repeat_spread_pct") is not None]
-    worst = max(spreads) if spreads else None
+    successful = [row for row in report["results"] if row.get("ok")]
+    repeated = all(row.get("repeats_ok", (row.get("repeats") or {}).get("repeats", 0)) >= 2 for row in successful)
+    spreads = [r.get("repeat_spread_pct") for r in successful if r.get("repeat_spread_pct") is not None]
+    worst = max(spreads) if spreads and repeated and len(spreads) == len(successful) else None
     if worst is None:
         add("Repeatability", "skip", "single repeat per cell; run with --repeats 3 for a stability check")
     elif worst <= 5:

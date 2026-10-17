@@ -9,7 +9,9 @@ suite.
 
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -17,6 +19,7 @@ import numpy as np
 from ..config import RunConfig
 from ..devices import Target
 from ..models import BuiltModel
+from ..stats import median
 from .base import Backend, BackendError, CompiledModel
 
 
@@ -138,3 +141,79 @@ class OrtBackend(Backend):
 
     def run(self, compiled: CompiledModel, feed: dict[str, np.ndarray]) -> list[np.ndarray]:
         return compiled.handle.run(None, feed)
+
+    def diagnose(self, compiled: CompiledModel, built: BuiltModel, target: Target,
+                 cfg: RunConfig, feed: dict[str, np.ndarray]) -> dict[str, Any]:
+        compiled.meta["compute_precisions"] = []
+        compiled.meta["compute_precision_source"] = "Runtime does not expose arithmetic precision."
+        if target.kind == "cpu":
+            profile_path = None
+            try:
+                options = self._session_options(target, cfg)
+                options.enable_profiling = True
+                directory = Path(".cache") / "profiles"
+                directory.mkdir(parents=True, exist_ok=True)
+                options.profile_file_prefix = str(directory / "precision")
+                session = self.ort.InferenceSession(built.serialise(), options, providers=[target.device])
+                session.run(None, feed)
+                profile_path = Path(session.end_profiling())
+                events = json.loads(profile_path.read_text(encoding="utf-8"))
+                types = set()
+                for event in events:
+                    arguments = event.get("args", {})
+                    if arguments.get("op_name") in ("MatMul", "Gemm", "FusedMatMul", "MatMulInteger", "QLinearMatMul"):
+                        input_types = arguments.get("input_type_shape", [])
+                        for index in ((0, 3) if arguments.get("op_name") == "QLinearMatMul" else (0, 1)):
+                            if index < len(input_types):
+                                types.update(input_types[index])
+                compiled.meta["compute_precisions"] = sorted(types)
+                compiled.meta["compute_precision_source"] = "ORT CPU compute-node input types; instruction/accumulator precision unverified"
+            except Exception as exc:
+                compiled.meta["compute_precision_source"] = f"Precision probe unavailable: {exc}"
+            finally:
+                if profile_path is not None:
+                    profile_path.unlink(missing_ok=True)
+            return {"available": False, "reason": "CPU execution has no host/GPU transfer phases."}
+        device = {"DmlExecutionProvider": "dml", "CUDAExecutionProvider": "cuda",
+                  "ROCMExecutionProvider": "cuda"}.get(target.device)
+        if target.kind != "gpu" or device is None:
+            return {"available": False, "reason": "Device-resident I/O binding is unavailable for this provider."}
+        try:
+            device_id = int(self._provider_options(target, built.precision).get("device_id", 0))
+            binding = compiled.handle.io_binding()
+            tensors = {name: self.ort.OrtValue.ortvalue_from_numpy(np.ascontiguousarray(value), device, device_id)
+                       for name, value in feed.items()}
+            for name, value in tensors.items():
+                binding.bind_ortvalue_input(name, value)
+            for name in compiled.output_names:
+                binding.bind_output(name, device, device_id)
+            for _ in range(max(2, cfg.warmup)):
+                compiled.handle.run_with_iobinding(binding)
+                binding.synchronize_outputs()
+            for name, value in zip(compiled.output_names, binding.get_outputs(), strict=True):
+                binding.bind_ortvalue_output(name, value)
+            reference = compiled.handle.run(None, feed)
+            phases = {"h2d_ms": [], "compute_ms": [], "d2h_ms": []}
+            sample_count = max(10, min(30, cfg.min_iterations))
+            for _ in range(sample_count):
+                started = time.perf_counter()
+                for name, tensor in tensors.items():
+                    tensor.update_inplace(np.ascontiguousarray(feed[name]))
+                binding.synchronize_inputs()
+                uploaded = time.perf_counter()
+                compiled.handle.run_with_iobinding(binding)
+                binding.synchronize_outputs()
+                computed = time.perf_counter()
+                outputs = binding.copy_outputs_to_cpu()
+                downloaded = time.perf_counter()
+                for actual, expected in zip(outputs, reference, strict=True):
+                    if not np.allclose(actual, expected, rtol=1e-3, atol=1e-3):
+                        raise BackendError("Device-resident output does not match the end-to-end result.")
+                phases["h2d_ms"].append((uploaded - started) * 1000)
+                phases["compute_ms"].append((computed - uploaded) * 1000)
+                phases["d2h_ms"].append((downloaded - computed) * 1000)
+            return {"available": True, "method": "synchronized_host_wall_io_binding", "samples": sample_count,
+                    **{name: median(values) for name, values in phases.items()}, "phase_samples_ms": phases,
+                    "note": "Synchronized host wall time, not GPU event/kernel time. Compute includes dispatch, synchronization, casts and quantization; model weights and I/O allocations are already resident. End-to-end inference is measured separately."}
+        except Exception as exc:
+            return {"available": False, "reason": f"I/O binding timing unavailable: {exc}"}
