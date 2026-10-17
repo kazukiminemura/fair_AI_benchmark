@@ -99,7 +99,7 @@ def _run_throughput(backend, compiled, built, target, cfg, feed, result, job):
 
     from .throughput import measure, measure_processes
 
-    candidates = [cfg.requests] if cfg.requests else [1, 2, 4, 8]
+    candidates = [cfg.requests] if cfg.requests else ([1, 2, 4, 8, 16, 32] if target.kind == "npu" else [1, 2, 4, 8])
     trials = []
     successful = []
     sampler = PowerSampler(sources=job.get("power_sources") or [], enabled=cfg.measure_power)
@@ -149,7 +149,7 @@ def _run_throughput(backend, compiled, built, target, cfg, feed, result, job):
         result.update({
             "ok": True, "phase": "done", "measurement_mode": "throughput",
             "concurrent_requests": best["requests"], "throughput_trials": trials,
-            "throughput_search": "fixed" if cfg.requests else "best observed among 1,2,4,8 requests",
+            "throughput_search": "fixed" if cfg.requests else f"best observed among {candidates} requests",
             "iterations": best["iterations"], "wall_s": best["wall_s"],
             "latency": stats.to_dict(), "units_per_s": units,
             "flops_per_s": built.flops * units, "power": power,

@@ -447,6 +447,51 @@ def check_battery_cli() -> None:
     print("Battery CLI checks passed: battery override, AC, desktop, unknown AC, default refusal.")
 
 
+def check_npu_int8_and_memory() -> None:
+    from fairbench import models, system, worker
+    from fairbench.backends.openvino_backend import OpenVinoBackend
+    from fairbench.runner import resolve_workloads
+
+    cfg = RunConfig(suite="npu_peak", include_int8=False, warmup=1, measure_power=False,
+                    min_seconds=0.05, max_seconds=2, repeats=1, threads=1)
+    assert cfg.mode == "throughput" and cfg.include_int8
+    assert resolve_workloads(cfg) == ["dense_static_int8"]
+    built = models.build_one("dense_static_int8")
+    ops = [n.op_type for n in built.model.graph.node]
+    assert ops.count("MatMul") == 2 and "DynamicQuantizeLinear" not in ops
+    assert "QuantizeLinear" in ops and "DequantizeLinear" in ops
+    target = Target("ov-cpu", "openvino", "CPU", "cpu", "intel", "CPU")
+    result = worker.run_cell({"target": target.to_dict(), "workload": built.key,
+                              "precision": "int8", "cfg": {**cfg.to_dict(), "requests": 2}})
+    assert result["ok"], result
+    assert result["correctness"]["valid"], result["correctness"]
+    assert result["concurrent_requests"] == 2 and result["flops_per_s"] > 0
+    assert result["session"]["quantization"] == "static_qdq"
+    backend = OpenVinoBackend()
+    npu = Target("npu", "openvino", "NPU", "npu", "intel", "NPU")
+    assert backend.ov.properties.hint.inference_precision() not in backend._properties(npu, cfg, "int8")
+    counts = []
+    def measured(runners, config):
+        counts.append(len(runners))
+        return {"latencies_ms": [1.0], "start": 0, "end": 1, "wall_s": 1,
+                "requests": len(runners), "iterations": 1, "units_per_s": len(runners),
+                "host_cpu_seconds": 0.1}
+    with patch("fairbench.throughput.measure", side_effect=measured):
+        sweep = worker._run_throughput(MagicMock(), MagicMock(output_names=[]), built, npu, cfg,
+                                       {}, {"warnings": []}, {"precision": "int8"})
+    assert counts == [1, 2, 4, 8, 16, 32] and sweep["concurrent_requests"] == 32
+    mem = system.MemoryInfo(total_gib=0.03125)
+    with patch.object(system.time, "perf_counter", side_effect=range(10)):
+        system.measure_memory_bandwidth(mem)
+    assert mem.bandwidth["gb_per_s"] == 2 * mem.bandwidth["buffer_bytes"] / 1e9
+    assert mem.bandwidth["samples"] == 5
+    with patch.object(system, "IS_WINDOWS", True), patch.object(system, "_powershell_json", return_value=[
+        {"Capacity": 8 * 1024**3, "Speed": 6400, "ConfiguredClockSpeed": 5600, "DataWidth": 64}]):
+        info = system._collect_memory()
+    assert info.speed_mts == 5600 and info.modules[0]["data_width_bits"] == 64
+    print("NPU preset, static QDQ INT8 correctness on CPU, parallel sweep, precision policy and RAM accounting passed.")
+
+
 def check_openvino_precision() -> None:
     try:
         from fairbench.backends.openvino_backend import OpenVinoBackend
@@ -473,6 +518,7 @@ def check_directml_options() -> None:
 
 
 if __name__ == "__main__":
+    check_npu_int8_and_memory()
     check_backend_selection()
     check_measurement_sets()
     check_compute_units()

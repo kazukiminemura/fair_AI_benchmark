@@ -56,6 +56,9 @@ def cmd_devices(args: argparse.Namespace) -> int:
     print(f"{c('MACHINE', BOLD)}")
     print(f"  CPU        {fp.cpu.name}  ({fp.cpu.physical_cores}C/{fp.cpu.logical_cores}T)")
     print(f"  Memory     {fp.memory.total_gib} GiB" + (f" @ {fp.memory.speed_mts} MT/s" if fp.memory.speed_mts else ""))
+    for module in fp.memory.modules:
+        if module.get("data_width_bits"):
+            print(f"             {module.get('slot') or 'module'}: {module['data_width_bits']} bit data width")
     print(f"  OS         {fp.os_name} {fp.os_release} (build {fp.os_build})")
     if fp.power.power_plan:
         print(f"  Power      {fp.power.power_plan}")
@@ -191,6 +194,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def _print_summary(report: dict) -> None:
+    bandwidth = ((report.get("system") or {}).get("memory") or {}).get("bandwidth") or {}
+    if bandwidth.get("available"):
+        print(f"  Host RAM copy: {bandwidth['gb_per_s']:.1f} GB/s (read + write; not NPU bandwidth)\n")
     rows = [r for r in report.get("results", []) if r.get("ok")]
     if not rows:
         print(c("  Nothing completed successfully.", RED))
@@ -563,7 +569,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--backend", choices=["all", "ort", "openvino", "winml"], default="all", help="runtime to benchmark (default: all available)")
     p_run.add_argument("--suite", choices=list(WORKLOAD_SETS), default="standard", help="measurement workload set; --workloads overrides it")
     p_run.add_argument("--mode", choices=["latency", "throughput"], default="latency")
-    p_run.add_argument("--requests", type=int, choices=range(33), default=0, metavar="0..32", help="throughput concurrency; 0 sweeps 1, 2, 4, 8")
+    p_run.add_argument("--requests", type=int, choices=range(33), default=0, metavar="0..32", help="throughput concurrency; 0 sweeps 1/2/4/8 (NPU also 16/32)")
     p_run.add_argument("--targets", nargs="*", default=None, help="target ids from `fairbench devices`")
     p_run.add_argument("--workloads", nargs="*", default=None, help="workload keys (default: a representative set)")
     p_run.add_argument("--out", default=None, help="output json path")
