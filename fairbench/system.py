@@ -24,6 +24,32 @@ from typing import Any
 IS_WINDOWS = sys.platform.startswith("win")
 
 
+def available_memory_bytes() -> int | None:
+    try:
+        if IS_WINDOWS:
+            import ctypes
+
+            class MemoryStatus(ctypes.Structure):
+                _fields_ = [("length", ctypes.c_uint32), ("load", ctypes.c_uint32)] + [
+                    (name, ctypes.c_uint64) for name in (
+                        "total_physical", "available_physical", "total_pagefile", "available_pagefile",
+                        "total_virtual", "available_virtual", "available_extended_virtual")]
+
+            status = MemoryStatus()
+            status.length = ctypes.sizeof(status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return int(status.available_physical)
+            return None
+        try:
+            import psutil
+
+            return int(psutil.virtual_memory().available)
+        except ImportError:
+            return int(os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 # --------------------------------------------------------------------------
 # low level helpers
 # --------------------------------------------------------------------------

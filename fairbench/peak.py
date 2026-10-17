@@ -6,6 +6,7 @@ from math import isfinite
 
 from .config import RunConfig
 from .devices import Target
+from .throughput import parallel_memory_budget
 from .worker_process import spawn_worker
 
 
@@ -30,12 +31,17 @@ def search(target: Target, workload: str, cfg: RunConfig, progress: Callable | N
                             max_seconds=max(2.0, min(cfg.max_seconds, 10.0)), repeats=1, measure_power=False)
         job = {"target": target.to_dict(), "workload": workload, "precision": precision,
                "cfg": probe_cfg.to_dict(), "repeat_index": 0, "power_sources": []}
-        result = spawn_worker(job, timeout=240, tag=f"peak-{target.id.replace(':', '-')}-{precision}-{size}-{requests}-{threads}")
+        memory = parallel_memory_budget(4 * size**2, 8 * size**2)
+        result = (spawn_worker(job, timeout=240, tag=f"peak-{target.id.replace(':', '-')}-{precision}-{size}-{requests}-{threads}")
+                  if requests <= memory["max_requests"] else {
+                      "ok": False, "skipped": True,
+                      "error": f"RAM budget allows {memory['max_requests']} request(s), requested {requests}."})
         correct = result.get("correctness") or {}
         trial = {"settings": settings, "ok": bool(result.get("ok")) and (not cfg.check_correctness or bool(correct.get("checked") and correct.get("valid"))),
                  "flops_per_s": result.get("flops_per_s"), "error": result.get("error"),
                  "correctness": correct, "model": result.get("model"), "wall_s": result.get("wall_s"),
                  "iterations": result.get("iterations"), "warnings": result.get("warnings", [])}
+        trial.update({"memory_budget": memory, "skipped": bool(result.get("skipped"))})
         trials.append(trial)
         if progress:
             progress({"event": "tuning", "target": target.id, "workload": workload,

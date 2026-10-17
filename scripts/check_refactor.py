@@ -18,6 +18,7 @@ from fairbench.config import RunConfig
 from fairbench.devices import Discovery, Target
 from fairbench.runner import _score, verify_targets
 from fairbench.system import PowerInfo, SystemFingerprint
+from scripts.check_memory import main as check_memory_limits
 
 
 def check_backend_selection() -> None:
@@ -47,8 +48,20 @@ def check_measurement_sets() -> None:
     from fairbench.runner import DEFAULT_WORKLOADS, WORKLOAD_SETS, resolve_workloads
 
     for key, suite in WORKLOAD_SETS.items():
-        assert resolve_workloads(RunConfig(suite=key, include_int8=False)) == suite["workloads"]
-    assert resolve_workloads(RunConfig(include_int8=False)) == DEFAULT_WORKLOADS
+        if key != "npu_peak":
+            assert resolve_workloads(RunConfig(suite=key, include_int8=False)) == [name for name in suite["workloads"] if not name.endswith("_int8")]
+    assert resolve_workloads(RunConfig(include_int8=False)) == [DEFAULT_WORKLOADS[0]]
+    assert RunConfig(suite="peak", mode="latency").mode == "latency"
+    assert not RunConfig(suite="npu_peak", include_int8=False).include_int8
+    for arguments, expected in ((["run"], "latency"), (["run", "--suite", "peak"], "peak"),
+                                (["run", "--suite", "peak", "--mode", "latency"], "latency")):
+        assert cli._config_from_args(cli.build_parser().parse_args(arguments)).mode == expected
+    try:
+        resolve_workloads(RunConfig(suite="npu_peak", include_int8=False))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("--no-int8 was ignored")
     assert resolve_workloads(RunConfig(suite="compute")) == ["dense_gemm", "dense_gemm_int8"]
     args = cli.build_parser().parse_args(["run", "--suite", "vision", "--no-int8"])
     cfg = cli._config_from_args(args)
@@ -454,7 +467,7 @@ def check_npu_int8_and_memory() -> None:
     from fairbench.backends.openvino_backend import OpenVinoBackend
     from fairbench.runner import resolve_workloads
 
-    cfg = RunConfig(suite="npu_peak", include_int8=False, warmup=1, measure_power=False,
+    cfg = RunConfig(suite="npu_peak", mode="throughput", include_int8=True, warmup=1, measure_power=False,
                     min_seconds=0.05, max_seconds=2, repeats=1, threads=1)
     assert cfg.mode == "throughput" and cfg.include_int8
     assert resolve_workloads(cfg) == ["dense_static_int8"]
@@ -478,7 +491,8 @@ def check_npu_int8_and_memory() -> None:
         return {"latencies_ms": [1.0], "start": 0, "end": 1, "wall_s": 1,
                 "requests": len(runners), "iterations": 1, "units_per_s": len(runners),
                 "host_cpu_seconds": 0.1}
-    with patch("fairbench.throughput.measure", side_effect=measured):
+    with patch("fairbench.throughput.measure", side_effect=measured), \
+            patch("fairbench.throughput.available_memory_bytes", return_value=64 * 1024**3):
         sweep = worker._run_throughput(MagicMock(), MagicMock(output_names=[]), built, npu, cfg,
                                        {}, {"warnings": []}, {"precision": "int8"})
     assert counts == [1, 2, 4, 8, 16, 32] and sweep["concurrent_requests"] == 32
@@ -538,3 +552,4 @@ if __name__ == "__main__":
     check_battery_cli()
     check_directml_options()
     check_openvino_precision()
+    check_memory_limits()

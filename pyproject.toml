@@ -23,6 +23,7 @@ classifiers = [
 
 # Select one ORT distribution per platform: these wheels share an import path.
 dependencies = [
+    "qrcode>=8.2",
     "numpy>=1.26",
     "onnx>=1.16",
     "onnxruntime-directml>=1.18; sys_platform == 'win32' and platform_machine == 'AMD64'",

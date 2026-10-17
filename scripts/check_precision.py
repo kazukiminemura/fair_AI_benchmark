@@ -7,21 +7,27 @@ import onnx
 import onnxruntime as ort
 
 from fairbench import models
-from fairbench.backends import BackendError
 from fairbench.backends.ort_backend import OrtBackend
+from fairbench.cli import _config_from_args, build_parser
 from fairbench.config import RunConfig
 from fairbench.devices import Target
 from fairbench.runner import DEFAULT_WORKLOADS, precision_of, resolve_workloads
 
 
 def main() -> None:
+    assert RunConfig().gemm_size == _config_from_args(build_parser().parse_args(["run"])).gemm_size == 2048
+    assert _config_from_args(build_parser().parse_args(["run", "--gemm-size", "512"])).gemm_size == 512
+    for size in (512, 2048):
+        sized = models.build_one("precision_gemm_fp16", size)
+        assert sized.gemm_shape == (size, size, size)
+        assert sized.flops == models.OPERATION_CONVENTION["operations_per_mac"] * size ** 3
     reference = models.build_precision_gemm()
+    assert reference.gemm_shape == (512, 1024, 1024)
     inputs = reference.make_inputs()
     options = ort.SessionOptions()
     options.log_severity_level = 3
     expected = ort.InferenceSession(reference.serialise(), options, providers=["CPUExecutionProvider"]).run(None, inputs)[0]
-    for precision, dtype in (("fp16", onnx.TensorProto.FLOAT16), ("fp8", onnx.TensorProto.FLOAT8E4M3FN),
-                             ("int8", onnx.TensorProto.INT8), ("int4", onnx.TensorProto.INT4)):
+    for precision, dtype in (("fp16", onnx.TensorProto.FLOAT16), ("int8", onnx.TensorProto.INT8)):
         built = models.build_precision_gemm(precision)
         onnx.checker.check_model(built.model, full_check=True)
         assert built.sha256 == models.build_one(built.key).sha256
@@ -36,6 +42,13 @@ def main() -> None:
             actual = session.run(None, inputs)[0]
             error = np.linalg.norm(actual - expected) / np.linalg.norm(expected)
             assert np.isfinite(actual).all() and error < (0.001 if precision == "fp16" else 0.03), error
+            if precision == "int8":
+                assert "QLinearMatMul" not in [node.op_type for node in built.model.graph.node]
+                cpu = Target("cpu", "ort", "CPUExecutionProvider", "cpu", "intel", "CPU")
+                backend = OrtBackend()
+                compiled = backend.compile(built, cpu, RunConfig(), "int8")
+                backend.diagnose(compiled, built, cpu, RunConfig(), inputs)
+                assert "MatMulIntegerToFloat" in compiled.meta["compute_kernels"], compiled.meta
 
     backend = OrtBackend()
     assert resolve_workloads(RunConfig()) == ["precision_gemm_fp16", "precision_gemm_int8"]
@@ -47,12 +60,14 @@ def main() -> None:
         backend.compile(models.build_precision_gemm("fp16"), target, RunConfig(), "fp16")
         assert create.call_args.kwargs["providers"] == ["DmlExecutionProvider"]
         assert create.call_args.kwargs["sess_options"].get_session_config_entry("session.disable_cpu_ep_fallback") == "1"
-    try:
-        backend.compile(models.build_precision_gemm("int4"), target, RunConfig(), "int4")
-    except BackendError as error:
-        assert "native INT4" in str(error)
-    else:
-        raise AssertionError("INT4 dequantization was reported as native INT4 throughput")
+    for precision in ("fp8", "int4"):
+        assert f"precision_gemm_{precision}" not in models.BASE_BUILDERS
+        try:
+            models.build_one(f"precision_gemm_{precision}")
+        except ValueError as error:
+            assert f"Native {precision.upper()}" in str(error)
+        else:
+            raise AssertionError("Unverified low precision arithmetic was offered as throughput")
     print("Precision graphs, deterministic hashes, full output accuracy, scheduling defaults and strict GPU fallback passed.")
 
 

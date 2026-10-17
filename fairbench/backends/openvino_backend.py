@@ -21,6 +21,7 @@ import numpy as np
 from ..config import RunConfig
 from ..devices import Target
 from ..models import BuiltModel
+from ..stats import median
 from .base import Backend, BackendError, CompiledModel
 
 CACHE_DIR = Path(".cache") / "openvino"
@@ -201,3 +202,38 @@ class OpenVinoBackend(Backend):
             return [np.asarray(request.get_tensor(name).data).copy() for name in compiled.output_names]
 
         return run, outputs
+
+    def diagnose(self, compiled: CompiledModel, built: BuiltModel, target: Target,
+                 cfg: RunConfig, feed: dict[str, np.ndarray]) -> dict[str, Any]:
+        try:
+            request = compiled.handle.create_infer_request()
+            inputs = {name: request.get_tensor(name).data for name in feed}
+            reference = self.run(compiled, feed)
+            for _ in range(max(2, cfg.warmup)):
+                for name, value in feed.items():
+                    np.copyto(inputs[name], value)
+                request.infer(share_outputs=True)
+            phases = {"h2d_ms": [], "compute_ms": [], "d2h_ms": []}
+            sample_count = max(10, min(30, cfg.min_iterations))
+            for _ in range(sample_count):
+                started = time.perf_counter()
+                for name, value in feed.items():
+                    np.copyto(inputs[name], value)
+                prepared = time.perf_counter()
+                request.infer(share_outputs=True)
+                computed = time.perf_counter()
+                outputs = [np.asarray(request.get_tensor(name).data).copy() for name in compiled.output_names]
+                collected = time.perf_counter()
+                for actual, expected in zip(outputs, reference, strict=True):
+                    if not np.allclose(actual, expected, rtol=1e-3, atol=1e-3):
+                        raise BackendError("Separated inference output does not match the end-to-end result.")
+                phases["h2d_ms"].append((prepared - started) * 1000)
+                phases["compute_ms"].append((computed - prepared) * 1000)
+                phases["d2h_ms"].append((collected - computed) * 1000)
+            return {"available": True, "method": "synchronous_infer_request_host_buffers",
+                    "transfer_scope": "host_buffers", "internal_transfers_in_compute": target.kind != "cpu",
+                    "samples": sample_count, "phase_samples_ms": phases,
+                    **{name: median(values) for name, values in phases.items()},
+                    "note": "Host input-buffer copy / synchronous InferRequest / host output copy. Runtime-internal device transfers remain inside inference; this is not isolated hardware transfer or kernel time."}
+        except Exception as exc:
+            return {"available": False, "reason": f"InferRequest phase timing unavailable: {exc}"}

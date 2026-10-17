@@ -360,12 +360,34 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--cyan); outline-
 .device-card { padding: 20px 22px; border: 1px solid var(--line); border-top: 4px solid var(--accent); border-radius: 12px; background: #fff; min-width: 0; box-shadow: 0 3px 12px rgba(30,50,85,.035); }
 .device-card-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .device-card h3 { margin: 0; font-size: 21px; color: var(--accent); }
+.device-selector { font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+.device-selector[aria-pressed="true"] { border-color: currentColor; background: #edf3fc; }
+.device-selector:hover { text-decoration: underline; }
+.device-selector:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.measurement-precision + .measurement-precision { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+.measurement-precision h4 { margin: 12px 0 6px; }
 .device-card-heading span { color: #325d44; background: #edf7ef; padding: 3px 8px; border-radius: 5px; font-size: 12px; }
 .device-role { margin: 3px 0 0; font-size: 13px; color: var(--muted); }
 .device-index { display: flex; align-items: baseline; gap: 6px; margin: 14px 0 12px; font: 700 48px/1.15 var(--mono); letter-spacing: -.04em; color: var(--text); }
 .device-index small { font: 500 18px var(--sans); letter-spacing: 0; color: var(--muted); }
+.device-index .inference-rate { flex-basis: 100%; font-size: 16px; }
+.measurement-diagram { padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.measurement-diagram h3 { margin: 0 0 8px; font-size: 18px; }
+.measurement-caption { margin: 8px 0; color: var(--muted); font-size: 13px; }
+.measurement-flow { display: flex; gap: 28px; padding: 0; margin: 18px 0; list-style: none; }
+.measurement-step { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 16px; background: #f3f6fc; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.measurement-step:not(:last-child)::after { content: '→'; position: absolute; right: -24px; top: 40%; font-size: 20px; color: var(--muted); }
+.measurement-duration { font: 600 24px var(--mono); }
+.inference-step { background: #edf8f1; border-color: #91c9a9; }
+.inference-step b { color: #15803d; font-size: 12px; }
+.measurement-scope { padding: 10px; border-top: 2px solid #2563eb; background: #edf3fc; font-size: 13px; }
+@media (max-width: 600px) {
+  .measurement-flow { flex-direction: column; gap: 28px; }
+  .measurement-step:not(:last-child)::after { content: '↓'; right: 50%; top: auto; bottom: -26px; }
+}
 .device-card .precision-index { font-size: 30px; margin: 8px 0; flex-wrap: wrap; }
 .device-definition + .device-role { margin-top: 20px; }
+.precision-index + .device-role { margin-top: 24px; }
 .device-meter { height: 8px; border-radius: 4px; overflow: hidden; background: #edf1f6; margin-bottom: 12px; }
 .device-meter span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
 .device-definition { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }

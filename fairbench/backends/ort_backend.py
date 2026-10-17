@@ -158,10 +158,10 @@ class OrtBackend(Backend):
 
     def _resident_binding(self, compiled: CompiledModel, feed: dict[str, np.ndarray],
                           target: Target, warmup: int):
-        device = self._IO_DEVICES[target.device]
+        device = self._IO_DEVICES.get(target.device, "cpu")
         device_id = int(self._provider_options(target, compiled.precision).get("device_id", 0))
         binding = compiled.handle.io_binding()
-        tensors = {name: self.ort.OrtValue.ortvalue_from_numpy(np.ascontiguousarray(value), device, device_id)
+        tensors = {name: self.ort.OrtValue.ortvalue_from_numpy(np.array(value, copy=True, order="C") if device == "cpu" else np.ascontiguousarray(value), device, device_id)
                    for name, value in feed.items()}
         for name, value in tensors.items():
             binding.bind_ortvalue_input(name, value)
@@ -185,19 +185,24 @@ class OrtBackend(Backend):
                 types = set()
                 for event in events:
                     arguments = event.get("args", {})
-                    if arguments.get("op_name") in ("MatMul", "Gemm", "FusedMatMul", "MatMulInteger", "QLinearMatMul"):
+                    if arguments.get("op_name") in ("MatMul", "Gemm", "FusedMatMul", "MatMulInteger", "QLinearMatMul", "MatMulIntegerToFloat", "DynamicQuantizeMatMul"):
                         input_types = arguments.get("input_type_shape", [])
+                        if arguments["op_name"] in ("MatMulIntegerToFloat", "DynamicQuantizeMatMul"):
+                            types.update(dtype for operand in input_types for dtype in operand if dtype in ("int8", "uint8"))
+                            continue
                         for index in ((0, 3) if arguments.get("op_name") == "QLinearMatMul" else (0, 1)):
                             if index < len(input_types):
                                 types.update(input_types[index])
                 compiled.meta["compute_precisions"] = sorted(types)
+                compiled.meta["compute_kernels"] = sorted({event.get("args", {}).get("op_name") for event in events
+                                                          if "MatMul" in event.get("args", {}).get("op_name", "")})
                 compiled.meta["compute_precision_source"] = "ORT CPU compute-node input types; instruction/accumulator precision unverified"
             except Exception as exc:
                 compiled.meta["compute_precision_source"] = f"Precision probe unavailable: {exc}"
-            return {"available": False, "reason": "CPU execution has no host/GPU transfer phases."}
-        if target.kind != "gpu" or target.device not in self._IO_DEVICES:
+        if target.kind not in ("cpu", "gpu", "npu") or (target.kind == "gpu" and target.device not in self._IO_DEVICES):
             return {"available": False, "reason": "Device-resident I/O binding is unavailable for this provider."}
-        compiled.meta["gpu_precision"] = self._probe_gpu_precision(built, target, cfg, feed)
+        if target.kind == "gpu":
+            compiled.meta["gpu_precision"] = self._probe_gpu_precision(built, target, cfg, feed)
         try:
             binding, tensors = self._resident_binding(compiled, feed, target, warmup=max(2, cfg.warmup))
             reference = compiled.handle.run(None, feed)
@@ -221,8 +226,11 @@ class OrtBackend(Backend):
                 phases["compute_ms"].append((computed - uploaded) * 1000)
                 phases["d2h_ms"].append((downloaded - computed) * 1000)
             return {"available": True, "method": "synchronized_host_wall_io_binding", "samples": sample_count,
+                    "transfer_scope": "host_buffers" if target.kind in ("cpu", "npu") else "device_io",
+                    "internal_transfers_in_compute": target.kind == "npu",
                     **{name: median(values) for name, values in phases.items()}, "phase_samples_ms": phases,
-                    "note": "Synchronized host wall time, not GPU event/kernel time. Compute includes dispatch, synchronization, casts and quantization; model weights and I/O allocations are already resident. End-to-end inference is measured separately."}
+                    "note": ("Host input-buffer copy / synchronous inference / host output copy. NPU runtime-internal transfers remain inside inference; this is not isolated hardware transfer or kernel time."
+                             if target.kind in ("cpu", "npu") else "Synchronized host wall time, not GPU event/kernel time. Compute includes dispatch, synchronization, casts and quantization; model weights and I/O allocations are already resident. End-to-end inference is measured separately.")}
         except Exception as exc:
             return {"available": False, "reason": f"I/O binding timing unavailable: {exc}"}
 

@@ -24,6 +24,7 @@
   </div>
   <div class="host-chips" id="hostChips" data-view="devices" hidden></div>
   <div class="topbar-actions">
+    <a class="btn ghost" href="/connect">スマホで測る（QR）</a>
     <button class="btn ghost" id="refreshBtn" title="Re-read this machine and its runtimes">機器を再検出</button>
     <button class="btn primary" id="newRunBtn">計測を始める</button>
   </div>
@@ -41,14 +42,10 @@
       </div>
       <div class="overview-status" id="overviewStatus" role="status">保存済みの計測結果を確認しています。</div>
       <div class="device-summary" id="overviewDevices"></div>
-      <div class="overview-foot">
-        <p id="overviewCoverage">計測を始めると、ここに結果を表示します。</p>
-      </div>
-      <div class="overview-links">
-        <a href="#environment"><b>結果を信頼できる？</b><span>安定性・正解照合・電源状態 →</span></a>
-        <a href="#devices"><b>GPU・NPUを使うには？</b><span>機器の検出状況と設定 →</span></a>
-        <a href="#method"><b>何をどう比べている？</b><span>計測方法と指標の読み方 →</span></a>
-      </div>
+      <section class="measurement-diagram" aria-labelledby="measurementTitle">
+        <h3 id="measurementTitle">転送込みの性能と、推論部分の性能</h3>
+        <div id="overviewMeasurement"></div>
+      </section>
     </section>
     <div class="detail-header" data-view="performance devices environment history method activity" hidden>
       <a class="text-link" href="#overview">← 概要に戻る</a><h2 id="viewTitle"></h2>
@@ -108,6 +105,12 @@
       <div class="table-wrap"><table class="data-table" id="resultTable"></table></div>
     </section>
 
+    <section class="section panel" data-view="performance" hidden>
+      <h2 class="section-title"><span>精度・測定条件の詳細</span><em>実行精度、探索条件、転送時間、注意事項</em></h2>
+      <div class="device-summary" id="precisionDetails"></div>
+      <p id="overviewCoverage"></p>
+    </section>
+
     <section class="section panel provenance" data-view="environment" hidden>
       <h2 class="section-title"><span>計測条件・記録</span><em>PC構成、実行設定、注意事項</em></h2>
       <div class="provenance-grid" id="provenance"></div>
@@ -143,9 +146,10 @@
     <div class="field-row">
       <div class="field"><label>繰り返し回数</label><input type="number" id="optRepeats" min="1" max="10" value="3" /></div>
       <div class="field"><label>1件あたりの秒数</label><input type="number" id="optSeconds" min="1" max="120" value="4" /></div>
-      <div class="field"><label for="optMode">測定モード</label><select id="optMode"><option value="peak">最大スループット（負荷・並列数を探索）</option><option value="latency">単発の遅延</option><option value="throughput">固定負荷の並列測定</option></select></div>
+      <div class="field"><label for="optMode">測定モード</label><select id="optMode"><option value="latency">単発の遅延</option><option value="peak">条件別探索（デバイス間比較不可）</option><option value="throughput">固定負荷の並列測定</option></select></div>
       <div class="field"><label for="optRequests">並列数（0＝自動探索・NPUは最大32）</label><input type="number" id="optRequests" min="0" max="32" value="0" /></div>
       <div class="field"><label>CPUスレッド数</label><input type="number" id="optThreads" min="1" max="128" placeholder="physical cores" /></div>
+      <div class="field"><label for="optGemmSize">共通GEMMサイズ（探索時は自動）</label><select id="optGemmSize"><option>512</option><option>1024</option><option selected>2048</option><option>4096</option></select></div>
     </div>
     <div class="field toggles">
       <label class="toggle"><input type="checkbox" id="optInt8" checked /><span>INT8（軽量化したモデル）も測定する</span></label>
