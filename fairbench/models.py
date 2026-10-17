@@ -30,6 +30,9 @@ from onnx import TensorProto, helper, numpy_helper
 # being supported by ONNX Runtime, OpenVINO (CPU/GPU/NPU) and Vitis AI.
 OPSET = 17
 SEED = 1337
+OPERATION_CONVENTION = {"operations_per_mac": 2, "gemm_formula": "2*M*K*N",
+                        "rate_formula": "model_operations * completed_inferences / wall_seconds",
+                        "gemm_count_includes_casts_and_quantization": False}
 
 # --------------------------------------------------------------------------
 # small helpers
@@ -119,6 +122,7 @@ class BuiltModel:
     flops: int
     unit: str  # what one graph execution produces: "sample" | "token" | "image"
     precision: str = "fp32"
+    gemm_shape: tuple[int, int, int] | None = None
 
     def serialise(self) -> bytes:
         return self.model.SerializeToString(deterministic=True)
@@ -588,6 +592,8 @@ def build_llm_decode() -> BuiltModel:
 # registry
 # --------------------------------------------------------------------------
 def build_precision_gemm(precision: str = "fp32", size: int = 0) -> BuiltModel:
+    if precision in ("fp8", "int4"):
+        raise ValueError(f"Native {precision.upper()} GEMM is not implemented or verified; no emulated throughput is reported.")
     rows, inner, columns = (size, size, size) if size else (512, 1024, 1024)
     key = "precision_gemm" + ("" if precision == "fp32" else f"_{precision}")
     weight = numpy_helper.to_array(_w("weight", (inner, columns), 1 / math.sqrt(inner), 8101))
@@ -606,41 +612,32 @@ def build_precision_gemm(precision: str = "fp32", size: int = 0) -> BuiltModel:
             helper.make_node("MatMul", ["input_half", "weight"], ["output_half"], name="precision_matmul"),
             helper.make_node("Cast", ["output_half"], ["y"], to=TensorProto.FLOAT),
         ])
-    elif precision in ("fp8", "int8", "int4"):
-        opset = OPSET if precision == "int8" else 21
-        dtype = {"fp8": TensorProto.FLOAT8E4M3FN, "int8": TensorProto.INT8, "int4": TensorProto.INT4}[precision]
-        input_scale, weight_scale = (0.5, 1 / 64) if precision == "int4" else (1 / 32, 1 / 1024)
-        quantized = weight / weight_scale
-        if precision != "fp8":
-            limit = 7 if precision == "int4" else 127
-            quantized = np.clip(np.rint(quantized), -limit - 1, limit).astype(np.int8)
+    elif precision == "int8":
+        input_scale = np.float32(1 / 32)
+        weight_scale = np.maximum(np.max(np.abs(weight), axis=0) / 127, np.finfo(np.float32).tiny)
+        quantized = np.clip(np.rint(weight / weight_scale), -127, 127).astype(np.int8)
         initializers.extend([
-            helper.make_tensor("weight", dtype, [inner, columns], quantized.ravel().tolist()),
-            helper.make_tensor("zero", dtype, [], [0]),
-            numpy_helper.from_array(np.array(input_scale, dtype=np.float32), "input_scale"),
-            numpy_helper.from_array(np.array(weight_scale, dtype=np.float32), "weight_scale"),
-            numpy_helper.from_array(np.array(1 / 32, dtype=np.float32), "output_scale"),
+            numpy_helper.from_array(quantized, "weight"),
+            numpy_helper.from_array(np.array(128, dtype=np.uint8), "input_zero"),
+            numpy_helper.from_array(np.zeros(columns, dtype=np.int8), "weight_zero"),
+            numpy_helper.from_array(np.array(input_scale), "input_scale"),
+            numpy_helper.from_array(weight_scale, "weight_scale"),
         ])
-        nodes.append(helper.make_node("QuantizeLinear", ["x", "input_scale", "zero"], ["input_quantized"]))
-        if precision == "int4":
-            nodes.extend([
-                helper.make_node("DequantizeLinear", ["input_quantized", "input_scale", "zero"], ["input_float"]),
-                helper.make_node("DequantizeLinear", ["weight", "weight_scale", "zero"], ["weight_float"]),
-                helper.make_node("MatMul", ["input_float", "weight_float"], ["y"], name="precision_matmul"),
-            ])
-        else:
-            nodes.extend([
-                helper.make_node("QLinearMatMul", ["input_quantized", "input_scale", "zero", "weight", "weight_scale", "zero", "output_scale", "zero"], ["output_quantized"], name="precision_matmul"),
-                helper.make_node("DequantizeLinear", ["output_quantized", "output_scale", "zero"], ["y"]),
-            ])
+        nodes.extend([
+            helper.make_node("QuantizeLinear", ["x", "input_scale", "input_zero"], ["input_quantized"]),
+            helper.make_node("DequantizeLinear", ["input_quantized", "input_scale", "input_zero"], ["input_float"]),
+            helper.make_node("DequantizeLinear", ["weight", "weight_scale", "weight_zero"], ["weight_float"], axis=1),
+            helper.make_node("MatMul", ["input_float", "weight_float"], ["y"], name="precision_matmul"),
+        ])
     else:
         raise ValueError(f"unsupported GEMM precision: {precision}")
     graph = helper.make_graph(nodes, key, inputs, outputs, initializers)
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", opset)])
     model.ir_version = 10 if opset >= 21 else 8
-    onnx.checker.check_model(model)
-    return BuiltModel(key, f"{rows}x{inner}x{columns} GEMM, {precision.upper()} inputs and weights", model,
-                      2 * rows * inner * columns, "sample", precision)
+    onnx.checker.check_model(model, full_check=True)
+    description = "static QDQ, UINT8 activations / INT8 weights" if precision == "int8" else f"{precision.upper()} inputs and weights"
+    return BuiltModel(key, f"{rows}x{inner}x{columns} GEMM, {description}", model,
+                      2 * rows * inner * columns, "sample", precision, (rows, inner, columns))
 
 
 def build_dense_static() -> BuiltModel:
@@ -650,7 +647,7 @@ def build_dense_static() -> BuiltModel:
 BASE_BUILDERS: dict[str, Callable[[], BuiltModel]] = {
     "precision_gemm": build_precision_gemm,
     **{f"precision_gemm_{precision}": (lambda precision=precision: build_precision_gemm(precision))
-       for precision in ("fp16", "fp8", "int8", "int4")},
+       for precision in ("fp16", "int8")},
     "dense_static": build_dense_static,
     "dense_gemm": build_dense_gemm,
     "conv_vision": build_conv_vision,
@@ -714,7 +711,9 @@ def build_one(key: str, gemm_size: int = 0) -> BuiltModel:
     """
     if key == "smoke":
         return build_smoke()
-    if gemm_size and (key == "precision_gemm" or key in {f"precision_gemm_{precision}" for precision in ("fp16", "fp8", "int8", "int4")}):
+    if key in ("precision_gemm_fp8", "precision_gemm_int4"):
+        return build_precision_gemm(key.rsplit("_", 1)[-1], gemm_size)
+    if gemm_size and key in ("precision_gemm", "precision_gemm_fp16", "precision_gemm_int8"):
         return build_precision_gemm("fp32" if key == "precision_gemm" else key.rsplit("_", 1)[-1], gemm_size)
     if key in BASE_BUILDERS:
         return BASE_BUILDERS[key]()

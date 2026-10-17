@@ -13,6 +13,7 @@ param(
     [string[]]$Targets,
     [string[]]$Workloads,
     [int]$Repeats = 0,
+    [ValidateSet(512, 1024, 2048, 4096)][int]$GemmSize = 2048,
     [switch]$AllowBattery,
     [switch]$NoServe
 )
@@ -24,6 +25,8 @@ $env:PYTHONIOENCODING = "utf-8"
 # the pinned toolchain; fall back to whatever `python` resolves to.
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+& (Join-Path $PSScriptRoot 'check-web.ps1')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $runner = if ((Get-Command uv -ErrorAction SilentlyContinue) -and (Test-Path "uv.lock")) {
     { param($a) uv run --no-sync fairbench @a }
 } else {
@@ -75,7 +78,7 @@ Write-Host ""
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # --- run -------------------------------------------------------------------
-$runArgs = @("run")
+$runArgs = @("run", "--gemm-size", "$GemmSize")
 if ($Full)      { $runArgs += "--full" }
 elseif ($Quick) { $runArgs += "--quick" }
 if ($Repeats -gt 0) { $runArgs += @("--repeats", "$Repeats") }

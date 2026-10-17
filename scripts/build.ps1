@@ -41,6 +41,8 @@ $env:PYTHONIOENCODING = "utf-8"
 
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+& (Join-Path $PSScriptRoot 'check-web.ps1')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Host "uv is required: https://docs.astral.sh/uv/getting-started/installation/" -ForegroundColor Red

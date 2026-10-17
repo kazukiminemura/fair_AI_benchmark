@@ -43,7 +43,7 @@ DEFAULT_WORKLOADS = [
 ]
 
 WORKLOAD_SETS = {
-    "peak": {"label": "最大スループット（デバイス別探索）", "workloads": DEFAULT_WORKLOADS},
+    "peak": {"label": "負荷探索（条件別・デバイス間比較不可）", "workloads": DEFAULT_WORKLOADS},
     "precision": {"label": "精度別性能（FP16・INT8）", "workloads": DEFAULT_WORKLOADS},
     "npu_peak": {"label": "NPU向け INT8・並列測定", "workloads": ["dense_static_int8"]},
     "standard": {"label": "標準（全デバイスでFP16・INT8）", "workloads": DEFAULT_WORKLOADS},
@@ -95,12 +95,16 @@ def resolve_workloads(cfg: RunConfig, requested: list[str] | None = None) -> lis
         for name in list(out):
             if models.has_int8(name) and f"{name}_int8" not in out:
                 out.append(f"{name}_int8")
+    else:
+        out = [name for name in out if precision_of(name) != "int8"]
+        if not out:
+            raise ValueError("--no-int8 excludes every workload in this suite; choose another suite.")
     return out
 
 
 def precision_of(workload: str) -> str:
     suffix = workload.rsplit("_", 1)[-1]
-    return suffix if suffix in ("fp16", "fp8", "int8", "int4") else "fp32"
+    return suffix if suffix in ("fp16", "int8") else "fp32"
 
 
 # --------------------------------------------------------------------------
@@ -215,6 +219,8 @@ def run_suite(
 
     report: dict[str, Any] = {
         "schema": "fairbench.result/1",
+        "measurement_contract": "element-checks-static-qdq-v2",
+        "operation_convention": models.OPERATION_CONVENTION,
         "tool": {"name": "fairbench", "version": __version__},
         "started_at": started,
         "finished_at": None,
@@ -377,6 +383,9 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "throughput_trials": [c.get("throughput_trials", []) for c in good] if base.get("measurement_mode") == "throughput" else [],
             "repeats_requested": len(items),
             "repeats_ok": len(good),
+            "correctness_verified": bool(good) and all(
+                (cell.get("correctness") or {}).get("method") == "deterministic_element_samples_v2"
+                and (cell.get("correctness") or {}).get("valid") is True for cell in good),
         }
         if not good:
             row.update(
@@ -406,6 +415,9 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "model_sha256": model_info.get("sha256"),
                 "model_size_bytes": model_info.get("size_bytes"),
                 "flops": model_info.get("flops"),
+                "gemm_shape": model_info.get("gemm_shape"),
+                "gemm_size": model_info.get("gemm_size"),
+                "operation_convention": model_info.get("operation_convention"),
                 "compile_ms": median([c["compile_ms"] for c in good if c.get("compile_ms") is not None]),
                 "latency_ms": median(medians) if medians else None,
                 "iterations": sum(int(c.get("iterations") or 0) for c in good),
@@ -447,6 +459,8 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
             **{name: median([timing[name] for timing in available_timings]) if available_timings else None
                for name in ("h2d_ms", "compute_ms", "d2h_ms")},
             "method": available_timings[0].get("method") if available_timings else None,
+            "transfer_scope": available_timings[0].get("transfer_scope") if available_timings else None,
+            "internal_transfers_in_compute": any(timing.get("internal_transfers_in_compute", False) for timing in available_timings),
             "note": available_timings[0].get("note") if available_timings else timings[0].get("reason"),
         }
         if power_ok:
@@ -636,7 +650,10 @@ def _grade(report: dict[str, Any], fp: system.SystemFingerprint, cfg: RunConfig)
         c for c in report["cells"] if (c.get("correctness") or {}).get("checked")
     ]
     invalid = [c for c in checked if (c.get("correctness") or {}).get("valid") is False]
-    if not checked:
+    unverified = [cell for cell in report["cells"] if cell.get("ok") and not (cell.get("correctness") or {}).get("checked")]
+    if unverified and cfg.check_correctness:
+        add("Correctness", "fail", f"{len(unverified)} successful cell(s) have no verified reference")
+    elif not checked:
         add("Correctness", "skip", "output verification was disabled")
     elif invalid:
         add("Correctness", "fail", f"{len(invalid)} cell(s) produced output that differs from the CPU reference")

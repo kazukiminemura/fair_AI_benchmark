@@ -23,7 +23,7 @@ class RunConfig:
     # ---- measurement policy ----------------------------------------------
     mode: str = "latency"  # latency | throughput
     requests: int = 0  # throughput: 0 sweeps 1/2/4/8; otherwise fixed concurrency
-    gemm_size: int = 0
+    gemm_size: int = 2048
     peak_max_size: int = 4096
     resident_io: bool = False
     warmup: int = 5
@@ -65,11 +65,6 @@ class RunConfig:
             raise ValueError("invalid GEMM search size")
         if not isinstance(self.requests, int) or not 0 <= self.requests <= 32:
             raise ValueError("requests must be an integer between 0 (auto) and 32")
-        if self.suite == "npu_peak":
-            self.mode = "throughput"
-            self.include_int8 = True
-        if self.suite == "peak":
-            self.mode = "peak"
 
     def resolve_threads(self) -> int:
         if self.threads and self.threads > 0:

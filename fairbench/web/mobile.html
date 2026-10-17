@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#f4f7fb">
+<title>fairbench · スマホ・ブラウザ測定</title>
+<link rel="stylesheet" href="/mobile.css">
+</head>
+<body>
+<main>
+  <header><span class="brand">fairbench</span><span class="badge">ブラウザ測定 v2</span></header>
+  <h1>この端末でAIの基本演算を測る</h1>
+  <p class="intro">開いているスマホ・PC自身で行列計算を実行します。アプリのインストールは不要です。</p>
+  <section class="controls" aria-label="測定設定">
+    <label for="size">CPUの行列サイズ</label>
+    <select id="size"><option value="128">128 × 128（標準）</option><option value="256">256 × 256（高負荷）</option></select>
+    <label for="gpuSize">GPUの負荷</label>
+    <select id="gpuSize"><option value="auto">自動（256・512・1024角から選択）</option><option value="256">256 × 256</option><option value="512">512 × 512</option><option value="1024">1024 × 1024（高負荷）</option></select>
+    <div class="actions"><button id="start">この端末を計測する</button><button id="stop" class="secondary" disabled>中止</button></div>
+    <p id="status" role="status" aria-live="polite">GPUに適した負荷を探索し、CPU・GPUを各3回測定します。画面を開いたままにしてください。</p>
+    <progress id="progress" max="6" value="0" aria-label="測定の進み具合"></progress>
+  </section>
+  <section class="cards" aria-label="この端末の測定結果">
+    <article><h2>CPU <small>JavaScript・1スレッド</small></h2><p class="value" id="cpuValue">未計測</p><p id="cpuDetail">FP32行列計算・1スレッド</p></article>
+    <article><h2>GPU <small>WebGL2経由</small></h2><p class="value" id="gpuValue">未計測</p><p id="gpuDetail">対応状況は測定時に確認します</p></article>
+    <article class="unavailable"><h2>NPU</h2><p class="value">未対応</p><p>このブラウザ版ではNPUを指定した計測を行いません。</p></article>
+  </section>
+  <div class="save"><button id="download" class="secondary" disabled>結果をJSONで保存</button></div>
+  <details><summary>測定条件・メモリ帯域</summary><dl id="conditions"></dl>
+    <p>CPUとGPUは別の負荷で測定します。GPUは大きな行列をGPU内で連続計算し、まとめて完了を待ちます。準備と結果の読戻しは測定区間から除き、測定前後に全出力をCPU参照計算と照合します。TFLOPSは完了した演算数と実時間からの換算値です。</p>
+    <p>ブラウザの実装・省電力・発熱・他のアプリの影響を含みます。v1の測定値・PC用ONNX測定・メーカーの理論値とは直接比較できません。GPU経路はソフトウェア描画の場合もあります。</p>
+    <p>メモリ帯域はTypedArrayコピーの読出し＋書込みの実測です。キャッシュの影響を含み、DRAMの理論帯域・NPU専用帯域ではありません。メモリのバス幅はブラウザから取得できません。</p>
+  </details>
+  <details><summary>スマホから開く方法</summary>
+    <ol><li>PCで <code>fairbench serve --mobile --port 8768</code> を起動します。ソース版は先頭に <code>uv run</code> を付けます。</li>
+    <li>スマホをPCと同じWi-Fiに接続します。</li><li>PCに表示された <code>http://…:8768/mobile</code> をスマホのブラウザで開きます。</li></ol>
+    <p>接続できない場合は、PCのプライベートネットワークでアプリの通信が許可されているか確認してください。結果はこのブラウザ内に保存され、PCには送信しません。</p>
+  </details>
+  <footer>最後の結果をこのブラウザに保存します。同じ測定バージョン・同じ負荷同士で比較してください。CPUとGPUの倍率比較はできません。</footer>
+</main>
+<script src="/mobile-bench.js"></script><script src="/mobile.js"></script>
+</body>
+</html>

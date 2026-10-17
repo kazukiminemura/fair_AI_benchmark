@@ -9,6 +9,7 @@ import numpy as np
 
 from fairbench import cli
 from fairbench.backends.base import CompiledModel
+from fairbench.backends.openvino_backend import OpenVinoBackend
 from fairbench.backends.ort_backend import OrtBackend
 from fairbench.config import RunConfig
 from fairbench.devices import Target
@@ -59,7 +60,7 @@ def main() -> None:
     target = Target("gpu", "ort", "DmlExecutionProvider", "gpu", "unknown", "GPU")
     event = {"cat": "Node", "name": "DmlFusedNode_0_0_kernel_time", "args": {
         "provider": target.device, "op_name": "DmlFusedNode_0_0", "input_type_shape": [{"float": [512, 512]}]}}
-    for precision, dtype in (("fp16", "float16"), ("int8", "int8")):
+    for precision, dtype in (("fp16", "float16"), ("int8", "float")):
         evidence = backend._gpu_precision_evidence(build_precision_gemm(precision, 512), target, [event])
         assert evidence["available"] and evidence["tensor_precisions"] == [dtype]
         assert evidence["arithmetic_precision"] == "unverified"
@@ -79,7 +80,7 @@ def main() -> None:
     gpu_cell["session"] = {"gpu_precision": evidence}
     gpu_triple = _aggregate([gpu_cell, deepcopy(gpu_cell), deepcopy(gpu_cell)])[0]
     assert gpu_triple["gpu_precision"]["repeats_measured"] == 3
-    assert "INT8 (GPU-assigned graph operands" in format_execution_precision(gpu_triple)
+    assert "FP32 (GPU-assigned graph operands" in format_execution_precision(gpu_triple)
     missing = deepcopy(gpu_cell)
     missing["session"] = {}
     assert not _aggregate([gpu_cell, missing])[0]["gpu_precision"]["available"]
@@ -93,6 +94,28 @@ def main() -> None:
     with patch.object(backend.ort.OrtValue, "ortvalue_from_numpy", return_value=MagicMock()):
         timing = backend.diagnose(compiled, SimpleNamespace(precision="fp16"), target, RunConfig(), {"x": output})
     assert not timing["available"] and "does not match" in timing["reason"]
+    binding.copy_outputs_to_cpu.return_value = [output]
+    for kind, provider in (("cpu", "CPUExecutionProvider"), ("npu", "VitisAIExecutionProvider")):
+        phase_target = Target(kind, "ort", provider, kind, "unknown", kind.upper())
+        with patch.object(backend, "_profile_events", return_value=[]), patch.object(backend.ort.OrtValue, "ortvalue_from_numpy", return_value=MagicMock()):
+            timing = backend.diagnose(compiled, built, phase_target, RunConfig(), {"x": output})
+        assert timing["available"] and timing["transfer_scope"] == "host_buffers"
+        assert timing["internal_transfers_in_compute"] == (kind == "npu")
+    ov_backend = OpenVinoBackend.__new__(OpenVinoBackend)
+    request = MagicMock()
+    input_buffer = np.zeros_like(output)
+    request.get_tensor.side_effect = lambda name: SimpleNamespace(data=input_buffer if name == "x" else output)
+    session.create_infer_request.return_value = request
+    for kind in ("cpu", "npu"):
+        phase_target = Target(kind, "openvino", kind.upper(), kind, "intel", kind.upper())
+        with patch.object(ov_backend, "run", return_value=[output]):
+            timing = ov_backend.diagnose(compiled, built, phase_target, RunConfig(), {"x": output})
+        assert timing["available"] and timing["transfer_scope"] == "host_buffers"
+        assert timing["internal_transfers_in_compute"] == (kind != "cpu")
+        assert np.array_equal(input_buffer, output)
+        assert all(len(values) == timing["samples"] for values in timing["phase_samples_ms"].values())
+    with patch.object(ov_backend, "run", return_value=[output * 2]):
+        assert not ov_backend.diagnose(compiled, built, phase_target, RunConfig(), {"x": output})["available"]
     print("Repeatability, precision evidence, synchronized GPU phases, output validation and repeat aggregation passed.")
 
 

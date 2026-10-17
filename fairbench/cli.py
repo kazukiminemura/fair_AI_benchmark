@@ -109,8 +109,9 @@ def _config_from_args(args: argparse.Namespace) -> RunConfig:
     cfg = RunConfig(
         backend=args.backend,
         suite="custom" if args.workloads else args.suite,
-        mode=args.mode,
+        mode=args.mode or {"peak": "peak", "npu_peak": "throughput"}.get(args.suite, "latency"),
         requests=args.requests,
+        gemm_size=args.gemm_size,
         warmup=args.warmup,
         min_iterations=args.iterations,
         min_seconds=args.min_seconds,
@@ -177,7 +178,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("  Plug in, or pass --allow-battery to record the number anyway.")
         return 2
 
-    workloads = resolve_workloads(cfg, args.workloads)
+    try:
+        workloads = resolve_workloads(cfg, args.workloads)
+    except ValueError as exc:
+        print(f"{c('ERROR', RED)} {exc}")
+        return 2
     print(f"{c('PLAN', BOLD)}  {len(workloads)} workloads x {cfg.repeats} repeat(s), "
           f"{cfg.min_seconds:g}s minimum per trial, mode={cfg.mode}, requests={cfg.requests or 'auto'}, threads={cfg.resolve_threads()}")
     print(f"{c('WORK', BOLD)}  {', '.join(workloads)}\n")
@@ -217,9 +222,14 @@ def _print_summary(report: dict) -> None:
             f"{(f'{idx:.2f}x' if idx else ''):>6s}"
         )
         print(f"    Runtime compute precision: {report_mod.format_execution_precision(r)}; repeats: {r.get('repeats_ok', 0)}")
+        shape = r.get("gemm_shape")
+        print(f"    GEMM MxKxN: {'x'.join(map(str, shape)) if shape else 'not recorded / not a GEMM workload'}; operations: 1 MAC = 2 ops")
         timing = r.get("timing_breakdown") or {}
         if timing.get("available"):
-            print(f"    H2D {timing['h2d_ms']:.3f} ms | resident inference + sync {timing['compute_ms']:.3f} ms | D2H {timing['d2h_ms']:.3f} ms (synchronized host wall time)")
+            input_label, output_label = ("input buffer copy", "output buffer copy") if timing.get("transfer_scope") == "host_buffers" else ("H2D", "D2H")
+            print(f"    {input_label} {timing['h2d_ms']:.3f} ms | inference + sync {timing['compute_ms']:.3f} ms | {output_label} {timing['d2h_ms']:.3f} ms (synchronized host wall time)")
+            if timing.get("internal_transfers_in_compute"):
+                print("    Runtime-internal device transfers remain inside inference.")
     grade = report.get("grade") or {}
     letter = grade.get("letter", "?")
     colour = GREEN if letter in ("A", "B") else YELLOW if letter == "C" else RED
@@ -266,10 +276,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     banner()
     if not args.no_open:
         try:
-            webbrowser.open(f"http://127.0.0.1:{args.port}/")
+            page = "connect" if args.mobile else ""
+            webbrowser.open(f"http://127.0.0.1:{args.port}/{page}")
         except Exception:
             pass
-    serve(port=args.port)
+    serve(port=args.port, mobile=args.mobile)
     return 0
 
 
@@ -478,14 +489,13 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     easily and where a missing optional module turns into a silently empty
     column rather than an error.
     """
-    import traceback
-
     from .backends import installed_backends
 
     banner()
     ok = True
 
     print(f"{c('1. workloads', BOLD)}")
+    print("  Native FP8/INT4 are unsupported and are not tested or reported as throughput.")
     keys = [*models.BASE_BUILDERS, *(f"{k}_int8" for k in models.QUANTISABLE), "smoke"]
     for key in keys:
         try:
@@ -512,36 +522,37 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         if backend is None:
             print(f"  [{c('skip', DIM)}] {target.id:38s} backend '{target.backend}' not installed")
             continue
-        try:
-            cfg = RunConfig(physical_cores=fp.cpu.physical_cores, logical_cores=fp.cpu.logical_cores)
-            built = models.build_one("smoke")
-            compiled = backend.compile(built, target, cfg, "fp32")
-            backend.run(compiled, built.make_inputs())
+        cfg = RunConfig(physical_cores=fp.cpu.physical_cores, logical_cores=fp.cpu.logical_cores)
+        verdict = verify_targets([target], cfg)[target.id]
+        if verdict.get("ok"):
             print(f"  [{c('ok  ', GREEN)}] {target.id:38s} {target.detail[:40]}")
             runnable.append(target)
-        except Exception as exc:
+        else:
             ok = False
-            print(f"  [{c('fail', RED)}] {target.id:38s} {str(exc).splitlines()[0][:90]}")
-            if args.verbose:
-                print(traceback.format_exc()[-800:])
+            print(f"  [{c('fail', RED)}] {target.id:38s} {verdict.get('error')}")
     if not runnable:
         ok = False
         print(f"  {c('no device could execute a model', RED)}")
 
-    print(f"\n{c('4. worker process', BOLD)}")
-    if runnable:
-        try:
-            verdict = verify_targets([runnable[0]], RunConfig(measure_power=False, repeats=1, physical_cores=fp.cpu.physical_cores))[runnable[0].id]
-            if verdict.get("ok"):
-                print(f"  [{c('ok  ', GREEN)}] isolated child process handled the probe ({verdict.get('latency_ms'):.2f} ms)")
-            else:
-                ok = False
-                print(f"  [{c('fail', RED)}] child process failed: {verdict.get('error')}")
-        except Exception as exc:
-            ok = False
-            print(f"  [{c('fail', RED)}] {exc}")
-    else:
-        print(f"  [{c('skip', DIM)}] no device to test with")
+    print(f"\n{c('4. precision workloads (isolated execution and output checks)', BOLD)}")
+    from .worker_process import spawn_worker
+
+    probe_cfg = RunConfig(gemm_size=512, warmup=1, min_iterations=1, max_iterations=1, min_seconds=0,
+                          max_seconds=10, repeats=1, measure_power=False,
+                          physical_cores=fp.cpu.physical_cores)
+    for target in runnable:
+        for precision in ("fp16", "int8"):
+            result = spawn_worker({"target": target.to_dict(), "workload": f"precision_gemm_{precision}",
+                                   "precision": precision, "cfg": probe_cfg.to_dict(), "power_sources": []},
+                                  timeout=180, tag=f"selftest-{target.id.replace(':', '-')}-{precision}")
+            correct = result.get("correctness", {})
+            passed = bool(result.get("ok") and correct.get("checked") and correct.get("valid"))
+            if passed and target.backend == "ort" and target.kind == "cpu" and precision == "int8":
+                passed = bool(set(result.get("session", {}).get("compute_kernels", [])) &
+                              {"MatMulIntegerToFloat", "MatMulInteger", "QLinearMatMul", "DynamicQuantizeMatMul"})
+            ok = ok and passed
+            detail = result.get("error") or (f"output verified; {report_mod.format_execution_precision(result)}" if passed else "precision kernel/output not verified")
+            print(f"  [{'ok' if passed else 'fail'}] {target.id} {precision}: {detail}")
 
     print(f"\n{c('5. dashboard assets', BOLD)}")
     for name in ("index.html", "style.css", "app.js"):
@@ -551,7 +562,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
 
     print()
     if ok:
-        print(f"{c('all checks passed', GREEN)}")
+        print(f"{c('all supported-workload execution checks passed for discovered devices', GREEN)}")
         return 0
     print(f"{c('some checks failed', RED)} - see above")
     return 1
@@ -575,9 +586,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="run the benchmark suite")
     p_run.add_argument("--backend", choices=["all", "ort", "openvino", "winml"], default="all", help="runtime to benchmark (default: all available)")
-    p_run.add_argument("--suite", choices=list(WORKLOAD_SETS), default="peak", help="measurement workload set; --workloads overrides it")
-    p_run.add_argument("--mode", choices=["latency", "throughput", "peak"], default="latency")
+    p_run.add_argument("--suite", choices=list(WORKLOAD_SETS), default="standard", help="measurement workload set; --workloads overrides it")
+    p_run.add_argument("--mode", choices=["latency", "throughput", "peak"], default=None)
     p_run.add_argument("--requests", type=int, choices=range(33), default=0, metavar="0..32", help="throughput concurrency; 0 sweeps 1/2/4/8 (NPU also 16/32)")
+    p_run.add_argument("--gemm-size", type=int, choices=[512, 1024, 2048, 4096], default=2048, help="common square GEMM size for all devices (standard default: 2048)")
     p_run.add_argument("--targets", nargs="*", default=None, help="target ids from `fairbench devices`")
     p_run.add_argument("--workloads", nargs="*", default=None, help="workload keys (default: a representative set)")
     p_run.add_argument("--out", default=None, help="output json path")
@@ -602,6 +614,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve = sub.add_parser("serve", help="start the dashboard web app")
     p_serve.add_argument("--port", type=int, default=8765)
     p_serve.add_argument("--no-open", action="store_true")
+    p_serve.add_argument("--mobile", action="store_true", help="serve the phone browser benchmark on the LAN; host APIs stay disabled")
     p_serve.set_defaults(func=cmd_serve)
 
     p_show = sub.add_parser("show", help="print a saved result")

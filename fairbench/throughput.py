@@ -10,6 +10,18 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 from .config import RunConfig
+from .system import available_memory_bytes
+
+
+def parallel_memory_budget(model_bytes: int, io_bytes: int) -> dict:
+    available = available_memory_bytes()
+    per_request = 128 * 1024**2 + 2 * (model_bytes + io_bytes)
+    budget = max(0, available // 2 - 512 * 1024**2) if available is not None else None
+    return {"available_bytes": available, "budget_bytes": budget,
+            "estimated_per_request_bytes": per_request,
+            "max_requests": budget // per_request if budget is not None else 1,
+            "policy": "half available RAM minus 512 MiB reserve; 128 MiB runtime + 2*(model + I/O) per request; unknown RAM limits concurrency to one",
+            "note": "Conservative estimate, not measured peak RAM or swap detection; driver workspaces may differ."}
 
 
 def measure(runners: list[Callable], cfg: RunConfig) -> dict:
@@ -103,7 +115,9 @@ def _process_lane(connection, job, cfg, count, issued, start, stop):
             t0 = time.perf_counter()
             run()
             timings.append((time.perf_counter() - t0) * 1000)
-        connection.send({"latencies_ms": timings, "host_cpu_seconds": time.process_time() - cpu0})
+        finished = time.perf_counter()
+        connection.send({"latencies_ms": timings, "host_cpu_seconds": time.process_time() - cpu0,
+                         "finished": finished})
     except BaseException as exc:
         stop.set()
         connection.send({"error": str(exc)})
@@ -118,6 +132,18 @@ def measure_processes(job: dict, cfg: RunConfig, count: int) -> dict:
     issued = context.Value("i", 0)
     start, stop = context.Event(), context.Event()
     processes, pipes = [], []
+
+    def receive(pipe, timeout, phase):
+        if not pipe.poll(timeout):
+            raise RuntimeError(f"Timed out {phase} a throughput process")
+        try:
+            response = pipe.recv()
+        except (EOFError, OSError) as exc:
+            raise RuntimeError(f"Throughput process exited without a result while {phase}") from exc
+        if "error" in response:
+            raise RuntimeError(response["error"])
+        return response
+
     try:
         for _ in range(count):
             parent, child = context.Pipe()
@@ -127,9 +153,7 @@ def measure_processes(job: dict, cfg: RunConfig, count: int) -> dict:
             processes.append(process)
             pipes.append(parent)
         for pipe in pipes:
-            if not pipe.poll(180):
-                raise RuntimeError("Timed out preparing a DirectML process")
-            response = pipe.recv()
+            response = receive(pipe, 180, "preparing")
             if not response.get("ready"):
                 raise RuntimeError(response.get("error", "DirectML process did not become ready"))
         t_start = time.perf_counter()
@@ -138,13 +162,9 @@ def measure_processes(job: dict, cfg: RunConfig, count: int) -> dict:
         start.set()
         responses = []
         for pipe in pipes:
-            if not pipe.poll((cfg.max_seconds or cfg.min_seconds) + 60):
-                raise RuntimeError("Timed out draining a DirectML process")
-            response = pipe.recv()
-            if "error" in response:
-                raise RuntimeError(response["error"])
+            response = receive(pipe, (cfg.max_seconds or cfg.min_seconds) + 60, "draining")
             responses.append(response)
-        t_end = time.perf_counter()
+        t_end = max(response["finished"] for response in responses)
         latencies = [value for response in responses for value in response["latencies_ms"]]
         if not latencies:
             raise RuntimeError("No DirectML inference completed")

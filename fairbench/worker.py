@@ -47,13 +47,20 @@ def _fingerprint(outputs: list[np.ndarray]) -> dict[str, Any]:
         "l2": float(np.linalg.norm(y)),
         "mean": float(y.mean()),
         "std": float(y.std()),
+        "outputs": [_output_samples(output) for output in outputs],
     }
+
+
+def _output_samples(output: np.ndarray) -> dict[str, Any]:
+    values = np.asarray(output, dtype=np.float64).ravel()
+    indices = np.sort(np.random.default_rng(8101).choice(values.size, min(values.size, 16384), replace=False))
+    return {"shape": list(output.shape), "indices": indices.tolist(), "values": values[indices].tolist()}
 
 
 def _reference_path(sha: str, seed: int, shape: tuple) -> Path:
     cache = Path(".cache") / "reference"
     cache.mkdir(parents=True, exist_ok=True)
-    return cache / f"{sha[:16]}-{seed}-{','.join(map(str, shape))}.json"
+    return cache / f"{sha[:16]}-{seed}-{','.join(map(str, shape))}-elements-v2.json"
 
 
 def reference_fingerprint(base_key: str, seed: int, gemm_size: int = 0) -> dict[str, Any] | None:
@@ -67,7 +74,9 @@ def reference_fingerprint(base_key: str, seed: int, gemm_size: int = 0) -> dict[
     path = _reference_path(built.sha256, seed, shape)
     if path.exists():
         try:
-            return json.loads(path.read_text())
+            cached = json.loads(path.read_text())
+            if cached.get("outputs"):
+                return cached
         except Exception:
             pass
     try:
@@ -85,10 +94,20 @@ def reference_fingerprint(base_key: str, seed: int, gemm_size: int = 0) -> dict[
 
 
 def relative_l2(outputs: list[np.ndarray], reference: dict[str, Any]) -> float | None:
-    current = _fingerprint(outputs)
-    if not reference or reference.get("l2", 0) == 0 or current["l2"] == 0:
+    expected = (reference or {}).get("outputs")
+    if not expected:
         return None
-    return abs(current["l2"] - reference["l2"]) / reference["l2"]
+    if len(outputs) != len(expected):
+        return float("inf")
+    squared_error = squared_reference = 0.0
+    for actual, sample in zip(outputs, expected, strict=True):
+        if list(actual.shape) != sample["shape"] or not np.isfinite(actual).all():
+            return float("inf")
+        values = np.asarray(actual, dtype=np.float64).ravel()[sample["indices"]]
+        reference_values = np.asarray(sample["values"], dtype=np.float64)
+        squared_error += float(np.sum((values - reference_values) ** 2))
+        squared_reference += float(np.sum(reference_values ** 2))
+    return math.sqrt(squared_error / max(squared_reference, np.finfo(np.float64).tiny))
 
 
 # --------------------------------------------------------------------------
@@ -97,16 +116,22 @@ def relative_l2(outputs: list[np.ndarray], reference: dict[str, Any]) -> float |
 def _run_throughput(backend, compiled, built, target, cfg, feed, result, job):
     from dataclasses import replace
 
-    from .throughput import measure, measure_processes
+    from .throughput import measure, measure_processes, parallel_memory_budget
 
     candidates = [cfg.requests] if cfg.requests else ([1, 2, 4, 8, 16, 32] if target.kind == "npu" else [1, 2, 4, 8])
     trials = []
     successful = []
+    model_bytes = built.size_bytes
+    io_bytes = sum(value.nbytes for value in feed.values()) + sum(
+        4 * math.prod(dim.dim_value for dim in output.type.tensor_type.shape.dim) for output in built.model.graph.output)
     sampler = PowerSampler(sources=job.get("power_sources") or [], enabled=cfg.measure_power)
     sampler.start()
     try:
         for count in candidates:
+            memory = parallel_memory_budget(model_bytes, io_bytes)
             try:
+                if count > memory["max_requests"]:
+                    raise BackendError(f"RAM budget allows {memory['max_requests']} request(s), requested {count}.")
                 runners = []
                 lane_cfg = replace(cfg, threads=max(1, cfg.resolve_threads() // count))
                 for _ in range(0 if target.device == "DmlExecutionProvider" else count):
@@ -140,10 +165,11 @@ def _run_throughput(backend, compiled, built, target, cfg, feed, result, job):
                          else measure(runners, cfg))
                 trial["power"] = sampler.summary((trial["start"], trial["end"])).to_dict()
                 trial["threads_per_session"] = lane_cfg.resolve_threads() if target.backend == "ort" else None
+                trial["memory_budget"] = memory
                 successful.append(trial)
                 trials.append({k: v for k, v in trial.items() if k != "latencies_ms"})
             except Exception as exc:
-                trials.append({"requests": count, "error": str(exc), "ok": False})
+                trials.append({"requests": count, "error": str(exc), "ok": False, "memory_budget": memory})
         if not successful:
             raise BackendError(f"All throughput trials failed: {trials}")
         if len(successful) != len(trials):
@@ -221,6 +247,9 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
         "unit": built.unit,
         "description": built.description,
         "precision": built.precision,
+        "gemm_shape": list(built.gemm_shape) if built.gemm_shape else None,
+        "gemm_size": built.gemm_shape[0] if built.gemm_shape and len(set(built.gemm_shape)) == 1 else None,
+        "operation_convention": models.OPERATION_CONVENTION,
     }
 
     # ---- compile ------------------------------------------------------
@@ -255,12 +284,13 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
         try:
             outs = [np.asarray(o) for o in backend.run(compiled, feed)]
             diff = relative_l2(outs, ref) if ref else None
-            tolerance = cfg.relative_tolerance * (5.0 if precision in ("int8", "int4") else 1.0)
+            tolerance = cfg.relative_tolerance
             result["correctness"] = {
-                "checked": ref is not None,
+                "checked": diff is not None,
                 "relative_l2_error": diff,
                 "tolerance": tolerance,
-                "valid": (diff is None) or (diff <= tolerance),
+                "valid": diff is not None and math.isfinite(diff) and diff <= tolerance,
+                "method": "deterministic_element_samples_v2",
                 "reference": "onnxruntime CPUExecutionProvider, fp32 graph",
             }
             if diff is not None and diff > tolerance:
@@ -269,8 +299,11 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
                     f"(tolerance {tolerance:.1%}) - numbers may be meaningless"
                 )
         except Exception as exc:
-            result["correctness"] = {"checked": False, "valid": None, "error": str(exc)}
+            result["correctness"] = {"checked": False, "valid": False, "error": str(exc)}
             warnings.append(f"correctness probe failed: {exc}")
+        if not result["correctness"]["valid"]:
+            result.update(error="Output correctness could not be verified; throughput is not published.", phase="correctness")
+            return result
 
     if cfg.mode == "throughput":
         measured = _run_throughput(backend, compiled, built, target, cfg, feed, result, job)
