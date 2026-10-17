@@ -30,7 +30,7 @@ def format_compute_rate(row: dict[str, Any]) -> str:
         return "—"
     if row.get("kind") == "npu":
         return f"{value / 1e12:.3f} TOPS"
-    return f"{value / 1e9:.1f} GFLOPS"
+    return f"{value / 1e12:.3f} TFLOPS"
 
 
 def default_name(prefix: str = "fairbench") -> str:

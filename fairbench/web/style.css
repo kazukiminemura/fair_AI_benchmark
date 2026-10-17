@@ -364,9 +364,11 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--cyan); outline-
 .device-role { margin: 3px 0 0; font-size: 13px; color: var(--muted); }
 .device-index { display: flex; align-items: baseline; gap: 6px; margin: 14px 0 12px; font: 700 48px/1.15 var(--mono); letter-spacing: -.04em; color: var(--text); }
 .device-index small { font: 500 18px var(--sans); letter-spacing: 0; color: var(--muted); }
+.device-card .precision-index { font-size: 30px; margin: 8px 0; flex-wrap: wrap; }
+.device-definition + .device-role { margin-top: 20px; }
 .device-meter { height: 8px; border-radius: 4px; overflow: hidden; background: #edf1f6; margin-bottom: 12px; }
 .device-meter span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
-.device-definition { margin: 0; color: var(--muted); font-size: 13px; }
+.device-definition { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .device-path { margin: 8px 0 14px; min-height: 20px; font-size: 13px; overflow-wrap: anywhere; color: var(--text); }
 .device-card > a { display: block; border-top: 1px solid var(--line); padding-top: 12px; }
 .device-card.unmeasured { border-top-color: #a7b3c5; background: #f8fafc; box-shadow: none; }

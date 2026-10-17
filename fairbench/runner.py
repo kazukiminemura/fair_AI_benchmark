@@ -43,9 +43,15 @@ DEFAULT_WORKLOADS = [
     "conv_vision",
     "transformer",
     "llm_prefill",
+    "precision_gemm_fp16",
+    "precision_gemm_fp8",
+    "precision_gemm_int8",
+    "precision_gemm_int4",
 ]
 
 WORKLOAD_SETS = {
+    "precision": {"label": "精度別性能（FP16・FP8 / INT8・INT4）", "workloads": [
+        "precision_gemm_fp16", "precision_gemm_fp8", "precision_gemm_int8", "precision_gemm_int4"]},
     "npu_peak": {"label": "NPU向け INT8・並列測定", "workloads": ["dense_static_int8"]},
     "standard": {"label": "標準（全モデル）", "workloads": DEFAULT_WORKLOADS},
     "compute": {"label": "行列計算", "workloads": ["dense_gemm"]},
@@ -55,6 +61,9 @@ WORKLOAD_SETS = {
 }
 
 WORKLOAD_META: dict[str, dict[str, str]] = {
+    **{f"precision_gemm_{precision}": {"label": f"行列計算（{precision.upper()}）", "category": "precision",
+       "blurb": "精度別GEMM。対応しないランタイムでは失敗理由を記録します。"}
+       for precision in ("fp16", "fp8", "int8", "int4")},
     "dense_static": {"category": "dense", "blurb": "Static INT8 calibration source (same MLP as dense_gemm)."},
     "dense_static_int8": {"label": "行列計算（静的INT8）", "category": "quantised", "blurb": "入力と重みを事前にINT8量子化した行列計算です。"},
     "dense_gemm": {"category": "dense", "blurb": "Wide MLP; pure matrix throughput. The NPU's home turf."},
@@ -97,7 +106,8 @@ def resolve_workloads(cfg: RunConfig, requested: list[str] | None = None) -> lis
 
 
 def precision_of(workload: str) -> str:
-    return "int8" if workload.endswith("_int8") else "fp32"
+    suffix = workload.rsplit("_", 1)[-1]
+    return suffix if suffix in ("fp16", "fp8", "int8", "int4") else "fp32"
 
 
 # --------------------------------------------------------------------------
@@ -261,6 +271,10 @@ def run_suite(
     for repeat in range(max(1, cfg.repeats)):
         for workload in workload_names:
             for target in runnable:
+                if workload.startswith("precision_gemm_") and (
+                    (target.kind == "npu") != (precision_of(workload) in ("int8", "int4"))
+                ):
+                    continue
                 schedule.append((repeat, target, workload))
 
     total = len(schedule)

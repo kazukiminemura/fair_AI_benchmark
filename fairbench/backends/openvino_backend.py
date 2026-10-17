@@ -116,14 +116,24 @@ class OpenVinoBackend(Backend):
         compile_ms = (time.perf_counter() - started) * 1000
 
         execution_precisions: dict[str, int] = {}
+        compute_precisions: set[str] = set()
         try:
             for node in compiled.get_runtime_model().get_ops():
                 info = node.get_rt_info()
                 if "runtimePrecision" in info:
                     value = str(info["runtimePrecision"].value)
                     execution_precisions[value] = execution_precisions.get(value, 0) + 1
+                    layer_type = str(info["layerType"].value) if "layerType" in info else ""
+                    if layer_type.lower() in ("fullyconnected", "matmul", "gemm"):
+                        compute_precisions.add(value.lower())
         except Exception:
             pass  # Not every device/driver exposes execution precision.
+
+        required_types = {"int4": ("i4", "u4"), "fp8": ("f8e4m3", "f8e5m2", "f8e4m3fn")}
+        if precision in required_types and not any(
+            value in required_types[precision] for value in compute_precisions
+        ):
+            raise BackendError(f"Native {precision.upper()} GEMM is not verified (compute precision: {sorted(compute_precisions)}). Converted FP32/FP16 throughput is not published.")
 
         return CompiledModel(
             handle=compiled,
@@ -133,8 +143,10 @@ class OpenVinoBackend(Backend):
             meta={
                 "execution_providers": [f"OpenVINO {target.device}"],
                 "input_graph_precision": built.precision,
-                "inference_precision_hint": "fp16" if target.kind in ("gpu", "npu") and precision != "int8" else "runtime_default",
-                "quantization": "static_qdq" if built.key == "dense_static_int8" else ("dynamic" if precision == "int8" else "none"),
+                "inference_precision_hint": "fp16" if target.kind in ("gpu", "npu") and precision not in ("int8", "int4", "fp8") else "runtime_default",
+                "quantization": ("static_qdq" if built.key == "dense_static_int8" or precision == "int4"
+                                 else "static_qoperator" if built.key in ("precision_gemm_int8", "precision_gemm_fp8")
+                                 else "dynamic" if precision == "int8" else "none"),
                 "precision_note": "Hint is a compiler preference, not proof of every operator's execution precision.",
                 "execution_precisions": execution_precisions,
                 "requested_provider": f"OpenVINO:{target.device}",
@@ -159,7 +171,7 @@ class OpenVinoBackend(Backend):
                 props[ov.properties.inference_num_threads()] = cfg.resolve_threads()
             except Exception:
                 pass
-        elif target.kind in ("gpu", "npu") and precision != "int8":
+        elif target.kind in ("gpu", "npu") and precision not in ("int8", "int4", "fp8"):
             # Both accelerators receive the same hint. Previously the GPU was
             # forced to FP32 while the NPU used FP16 for the same FP32 graph.
             try:

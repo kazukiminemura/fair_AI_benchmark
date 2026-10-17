@@ -587,11 +587,70 @@ def build_llm_decode() -> BuiltModel:
 # --------------------------------------------------------------------------
 # registry
 # --------------------------------------------------------------------------
+def build_precision_gemm(precision: str = "fp32") -> BuiltModel:
+    rows, inner, columns = 512, 1024, 1024
+    key = "precision_gemm" + ("" if precision == "fp32" else f"_{precision}")
+    weight = numpy_helper.to_array(_w("weight", (inner, columns), 1 / math.sqrt(inner), 8101))
+    inputs = [_vi("x", [rows, inner])]
+    outputs = [_vi("y", [rows, columns])]
+    nodes = []
+    initializers = []
+    opset = OPSET
+    if precision == "fp32":
+        initializers.append(numpy_helper.from_array(weight, "weight"))
+        nodes.append(helper.make_node("MatMul", ["x", "weight"], ["y"], name="precision_matmul"))
+    elif precision == "fp16":
+        initializers.append(numpy_helper.from_array(weight.astype(np.float16), "weight"))
+        nodes.extend([
+            helper.make_node("Cast", ["x"], ["input_half"], to=TensorProto.FLOAT16),
+            helper.make_node("MatMul", ["input_half", "weight"], ["output_half"], name="precision_matmul"),
+            helper.make_node("Cast", ["output_half"], ["y"], to=TensorProto.FLOAT),
+        ])
+    elif precision in ("fp8", "int8", "int4"):
+        opset = 21
+        dtype = {"fp8": TensorProto.FLOAT8E4M3FN, "int8": TensorProto.INT8, "int4": TensorProto.INT4}[precision]
+        input_scale, weight_scale = (0.5, 1 / 64) if precision == "int4" else (1 / 32, 1 / 1024)
+        quantized = weight / weight_scale
+        if precision != "fp8":
+            limit = 7 if precision == "int4" else 127
+            quantized = np.clip(np.rint(quantized), -limit - 1, limit).astype(np.int8)
+        initializers.extend([
+            helper.make_tensor("weight", dtype, [inner, columns], quantized.ravel().tolist()),
+            helper.make_tensor("zero", dtype, [], [0]),
+            numpy_helper.from_array(np.array(input_scale, dtype=np.float32), "input_scale"),
+            numpy_helper.from_array(np.array(weight_scale, dtype=np.float32), "weight_scale"),
+            numpy_helper.from_array(np.array(1 / 32, dtype=np.float32), "output_scale"),
+        ])
+        nodes.append(helper.make_node("QuantizeLinear", ["x", "input_scale", "zero"], ["input_quantized"]))
+        if precision == "int4":
+            nodes.extend([
+                helper.make_node("DequantizeLinear", ["input_quantized", "input_scale", "zero"], ["input_float"]),
+                helper.make_node("DequantizeLinear", ["weight", "weight_scale", "zero"], ["weight_float"]),
+                helper.make_node("MatMul", ["input_float", "weight_float"], ["y"], name="precision_matmul"),
+            ])
+        else:
+            nodes.extend([
+                helper.make_node("QLinearMatMul", ["input_quantized", "input_scale", "zero", "weight", "weight_scale", "zero", "output_scale", "zero"], ["output_quantized"], name="precision_matmul"),
+                helper.make_node("DequantizeLinear", ["output_quantized", "output_scale", "zero"], ["y"]),
+            ])
+    else:
+        raise ValueError(f"unsupported GEMM precision: {precision}")
+    graph = helper.make_graph(nodes, key, inputs, outputs, initializers)
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", opset)])
+    model.ir_version = 10 if opset >= 21 else 8
+    onnx.checker.check_model(model)
+    return BuiltModel(key, f"512x1024x1024 GEMM, {precision.upper()} inputs and weights", model,
+                      2 * rows * inner * columns, "sample", precision)
+
+
 def build_dense_static() -> BuiltModel:
     return replace(build_dense_gemm(), key="dense_static", description="MLP for static INT8 QDQ calibration")
 
 
 BASE_BUILDERS: dict[str, Callable[[], BuiltModel]] = {
+    "precision_gemm": build_precision_gemm,
+    **{f"precision_gemm_{precision}": (lambda precision=precision: build_precision_gemm(precision))
+       for precision in ("fp16", "fp8", "int8", "int4")},
     "dense_static": build_dense_static,
     "dense_gemm": build_dense_gemm,
     "conv_vision": build_conv_vision,
