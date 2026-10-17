@@ -1,13 +1,17 @@
 """Regression gates for correctness, process timing and CLI precedence."""
 
+import json
+import subprocess
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from fairbench import cli, models, throughput, worker
+from fairbench import cli, models, throughput, worker, worker_process
 from fairbench.backends.base import CompiledModel
 from fairbench.config import RunConfig
 from fairbench.devices import Target
@@ -16,6 +20,31 @@ from fairbench.worker import _fingerprint, relative_l2
 
 
 def main() -> None:
+    def reject_constant(value):
+        raise AssertionError(f"Nonstandard JSON constant: {value}")
+
+    payload = {"ok": True, "latency": {"mean_ms": float("nan")},
+               "nested": [float("inf"), (float("-inf"), {"value": np.float32("nan")})],
+               "array": np.array([np.nan, np.inf, -np.inf, 1.25]),
+               "numpy_float": np.float64("nan"), "numpy_int": np.int64(3),
+               "literal": "NaN is text", "finite": 2.5}
+    with TemporaryDirectory() as directory, patch.object(worker_process, "JOB_DIR", Path(directory)):
+        def launch(cmd, **kwargs):
+            with patch.object(worker, "run_cell", return_value=payload):
+                assert worker.main(["worker", cmd[-2], cmd[-1]]) == 0
+            parsed = json.loads(Path(cmd[-1]).read_text(), parse_constant=reject_constant)
+            assert parsed["latency"]["mean_ms"] is None
+            assert parsed["nested"] == [None, [None, {"value": None}]]
+            assert parsed["array"] == [None, None, None, 1.25]
+            assert parsed["numpy_float"] is None and parsed["numpy_int"] == 3
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+        with patch.object(worker_process.subprocess, "run", side_effect=launch):
+            result = worker_process.spawn_worker({"target": {"id": "test"}, "workload": "smoke"}, 1, "nonfinite")
+        assert result["ok"] and result["worker_returncode"] == 0
+        assert result["latency"]["mean_ms"] is None and result["numpy_float"] is None
+        assert result["literal"] == payload["literal"] and result["finite"] == 2.5
+    print("Worker strict JSON checks passed: nested NaN/Infinity become null, NumPy conversions and parent readback.")
     values = np.arange(1, 25, dtype=np.float32).reshape(4, 6)
     reference = _fingerprint([values, values * 2])
     assert relative_l2([values.copy(), values * 2], reference) == 0

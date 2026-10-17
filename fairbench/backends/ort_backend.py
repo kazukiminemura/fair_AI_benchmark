@@ -293,7 +293,7 @@ class OrtBackend(Backend):
                 for index in ((0, 3) if node.op_type == "QLinearMatMul" else (0, 1)):
                     dtype = tensor_types.get(node.input[index])
                     if not dtype:
-                        return {"available": False, "reason": "Assigned graph omitted a compute operand type."}
+                        return {"available": False, "reason": "Pre-optimization ONNX graph omitted a compute operand type."}
                     types.add(onnx.TensorProto.DataType.Name(dtype).lower())
             evidence = "profiled_fused_graph"
         if not types:
@@ -302,5 +302,7 @@ class OrtBackend(Backend):
                 "evidence": evidence, "profiled_operators": [kernel.get("op_name") for kernel in kernels],
                 "arithmetic_precision": "unverified", "accumulator_precision": "unverified",
                 "note": "GPU provider assignment verified in a separate session with identical model/options. "
-                        "Types describe compute operands in the assigned graph, not native GPU instructions or accumulator precision. "
+                        + ("Types come from pre-optimization ONNX compute operands, not the optimized/fused graph. "
+                           if evidence == "profiled_fused_graph" else "Types come from profiled compute operator inputs. ")
+                        + "Neither source verifies native GPU instructions or accumulator precision. "
                         "Fused graph boundary input/output types are not used as compute precision."}

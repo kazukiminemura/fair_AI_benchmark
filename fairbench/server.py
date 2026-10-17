@@ -252,8 +252,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"results": report_mod.list_results()})
             return
         if path.startswith("/api/result/"):
-            name = report_mod.safe_name(path.split("/", 3)[3])
-            self._json(report_mod.load(report_mod.RESULTS_DIR / name))
+            try:
+                name = report_mod.safe_name(path.split("/", 3)[3])
+                target = report_mod.RESULTS_DIR / name
+                if not target.is_file():
+                    raise FileNotFoundError(name)
+                data = report_mod.load(target)
+            except (OSError, ValueError):
+                self._json({"error": "not found"}, 404)
+                return
+            self._json(data)
             return
         if path == "/api/run":
             self._json(STATE.snapshot())
@@ -301,7 +309,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/delete":
             body = self._body()
-            name = report_mod.safe_name(body.get("file", ""))
+            try:
+                if not isinstance(body, dict):
+                    raise ValueError("Request body must be an object")
+                name = report_mod.safe_name(body.get("file"))
+            except ValueError:
+                self._json({"ok": False, "error": "not found"}, 404)
+                return
             target = report_mod.RESULTS_DIR / name
             if target.exists() and target.is_file():
                 target.unlink()

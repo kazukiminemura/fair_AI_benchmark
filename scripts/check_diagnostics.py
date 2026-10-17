@@ -16,11 +16,25 @@ from fairbench.devices import Target
 from fairbench.models import build_precision_gemm
 from fairbench.report import format_execution_precision
 from fairbench.runner import _aggregate, _grade
-from fairbench.stats import summarise_repeats
+from fairbench.stats import summarise, summarise_repeats
 from fairbench.system import PowerInfo
 
 
 def main() -> None:
+    for values in ([], [float("nan"), float("inf"), -float("inf"), None]):
+        empty = summarise(values)
+        assert empty.count == 0 and empty.outliers == 0 and type(empty.outliers) is int
+        assert all(math.isnan(value) for key, value in empty.to_dict().items() if key not in ("count", "outliers"))
+    for value in (0.0, 2.5):
+        single = summarise([value])
+        assert single.count == 1 and single.outliers == 0 and type(single.outliers) is int
+        assert all(getattr(single, key) == value for key in ("mean_ms", "median_ms", "p90_ms", "p99_ms", "min_ms", "max_ms"))
+        assert single.stdev_ms == single.mad_ms == single.iqr_ms == 0
+        if value:
+            assert single.cv == single.cv_trimmed == 0
+        else:
+            assert math.isnan(single.cv) and math.isnan(single.cv_trimmed)
+    print("Empty/single-sample statistics passed: integer outliers, unavailable floats, unchanged singleton boundaries.")
     assert math.isnan(summarise_repeats([10], [1]).spread_pct)
     assert summarise_repeats([10, 10, 10], [1, 1, 1]).spread_pct == 0
     args = cli.build_parser().parse_args(["run", "--quick"])

@@ -19,6 +19,7 @@ Order of operations, and why:
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -550,6 +551,13 @@ def _score(report: dict[str, Any]) -> dict[str, Any]:
             per_target_w.setdefault(row["target_id"], []).append(row["units_per_joule"])
 
     index = _rank_targets(rows, per_target, "ai_index")
+    for entry in index:
+        used = [row for row in compared if row["target_id"] == entry["target_id"] and row.get("units_per_s")]
+        for key in ("repeats_ok", "repeats_requested"):
+            counts = [row.get(key, (row.get("repeats") or {}).get("repeats") if key == "repeats_ok"
+                              else (report.get("config") or {}).get("repeats")) for row in used]
+            entry[key] = sum(counts) if all(count is not None for count in counts) else None
+        entry["repeat_note"] = "Repeat counts are totals across the comparison workloads; fewer successful repeats than requested means incomplete coverage."
     efficiency = _rank_targets(rows, per_target_w, "units_per_joule")
     cpu_ai = next((i["ai_index"] for i in index if i["target_id"] == baseline_id), None)
 
@@ -607,7 +615,18 @@ def _grade(report: dict[str, Any], fp: system.SystemFingerprint, cfg: RunConfig)
     spreads = [r.get("repeat_spread_pct") for r in successful if r.get("repeat_spread_pct") is not None]
     worst = max(spreads) if spreads and repeated and len(spreads) == len(successful) else None
     if worst is None:
-        add("Repeatability", "skip", "single repeat per cell; run with --repeats 3 for a stability check")
+        requested = (report.get("config") or {}).get("repeats", cfg.repeats)
+        if requested >= 2 or any(row.get("repeats_requested", 0) >= 2 for row in report["results"]):
+            coverage = [
+                f"{row.get('target_id', '?')}/{row.get('workload', '?')}: "
+                f"{row.get('repeats_ok', (row.get('repeats') or {}).get('repeats', 0))} successful "
+                f"of {row.get('repeats_requested', requested)} requested repeats"
+                for row in report["results"]
+            ]
+            add("Repeatability", "skip", "insufficient successful repeat statistics; " + (
+                "; ".join(coverage) or f"0 successful of {requested} requested repeats per combination"))
+        else:
+            add("Repeatability", "skip", "single repeat per cell; run with --repeats 3 for a stability check")
     elif worst <= 5:
         add("Repeatability", "pass", f"worst repeat spread {worst:.1f}% (<=5%)")
     elif worst <= 12:
@@ -621,21 +640,23 @@ def _grade(report: dict[str, Any], fp: system.SystemFingerprint, cfg: RunConfig)
     # Throughput is what gets published, so this only escalates to a failure
     # when the repeats disagree too.
     total_iterations = sum(int(r.get("iterations") or 0) for r in report["results"] if r.get("ok"))
-    trimmed = [
-        r["latency"].get("cv_trimmed")
-        for r in report["results"]
-        if r.get("ok") and r.get("latency") and r["latency"].get("cv_trimmed") is not None
-    ]
-    worst_trimmed = max((v for v in trimmed if v is not None), default=None)
+    latencies = [latency for row in successful
+                 for latency in (row.get("repeat_latencies") or [row.get("latency") or {}])
+                 if latency.get("cv_trimmed") is not None and math.isfinite(latency["cv_trimmed"])]
+    worst_latency = max(latencies, key=lambda latency: latency["cv_trimmed"], default={})
+    worst_trimmed = worst_latency.get("cv_trimmed")
+    population = (f"over {worst_latency['count']:,} iterations in the worst repeat"
+                  if worst_latency.get("count") is not None else
+                  f"over {total_iterations:,} iterations total across successful repeats (worst repeat count unavailable)")
     if worst_trimmed is None:
         add("Timing stability", "skip", "no per-iteration statistics available")
     elif worst_trimmed <= 0.05:
-        add("Timing stability", "pass", f"worst trimmed CV {worst_trimmed:.1%} over {total_iterations:,} iterations")
+        add("Timing stability", "pass", f"worst trimmed CV {worst_trimmed:.1%} {population}")
     elif worst_trimmed <= 0.20 or (worst is not None and worst <= 5):
         add(
             "Timing stability",
             "warn",
-            f"per-iteration jitter {worst_trimmed:.1%} over {total_iterations:,} iterations"
+            f"worst repeat per-iteration jitter {worst_trimmed:.1%} {population}"
             + (
                 f", but repeats agree within {worst:.1f}%, so throughput is stable"
                 if worst is not None and worst <= 5
@@ -643,7 +664,7 @@ def _grade(report: dict[str, Any], fp: system.SystemFingerprint, cfg: RunConfig)
             ),
         )
     else:
-        add("Timing stability", "fail", f"per-iteration jitter {worst_trimmed:.1%}; results are not stable")
+        add("Timing stability", "fail", f"worst repeat per-iteration jitter {worst_trimmed:.1%} {population}; results are not stable")
 
     # correctness
     checked = [
@@ -674,6 +695,16 @@ def _grade(report: dict[str, Any], fp: system.SystemFingerprint, cfg: RunConfig)
     failed = [c for c in report["cells"] if not c.get("ok")]
     if failed:
         add("Cell failures", "warn", f"{len(failed)} of {len(report['cells'])} cells did not complete")
+        errors: dict[str, int] = {}
+        for cell in failed:
+            if cell.get("error"):
+                error = str(cell["error"])
+                errors[error] = errors.get(error, 0) + 1
+        warnings = report.setdefault("warnings", [])
+        for error, count in sorted(errors.items()):
+            warning = f"{count} failed cell(s): {error}"
+            if warning not in warnings:
+                warnings.append(warning)
 
     # error measurement
     with_units = [r for r in report["results"] if r.get("ok") and r.get("units_per_joule")]

@@ -48,7 +48,12 @@ def format_execution_precision(row: dict[str, Any]) -> str:
         return "unverified"
     text = "/".join(sorted({names.get(value.lower(), value.upper()) for value in values}))
     if gpu_assigned:
-        return text + " (GPU-assigned graph operands; native arithmetic/accumulator unverified)"
+        evidence = gpu.get("evidence", [])
+        if isinstance(evidence, str):
+            evidence = [evidence]
+        if "profiled_fused_graph" in evidence:
+            return text + " (GPU-assigned graph operands: types from pre-optimization ONNX, not optimized/runtime types; native arithmetic/accumulator unverified)"
+        return text + " (GPU profile operand types; source " + ("profiled inputs" if "profiled_compute_inputs" in evidence else "not recorded") + "; native arithmetic/accumulator unverified)"
     return text if row.get("compute_precision_complete", True) else text + " (partially unverified)"
 
 
@@ -75,7 +80,11 @@ def load(path: str | Path) -> dict[str, Any]:
 
 
 def safe_name(name: str) -> str:
+    if not isinstance(name, str):
+        raise ValueError("Result name must be a string")
     cleaned = _SAFE.sub("-", name).strip("-")
+    if cleaned and not cleaned.strip("."):
+        raise ValueError("Result name must be a filename, not a directory")
     return cleaned or "result"
 
 

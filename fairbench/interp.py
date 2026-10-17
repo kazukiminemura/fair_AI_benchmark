@@ -199,14 +199,15 @@ def _signature(path: str) -> str:
     python = Path(path)
     prefix = python.parent.parent if python.parent.name.lower() in ("bin", "scripts") else python.parent
     # Installing SDK packages leaves python.exe unchanged. Include Conda's
-    # transaction history and the Windows ORT package in cache invalidation.
+    # transaction history and ORT packages in both Windows and POSIX layouts.
     files = [python, prefix / "conda-meta" / "history",
              prefix / "Lib" / "site-packages" / "onnxruntime" / "__init__.py"]
+    files.extend(sorted(prefix.glob("lib/python*/site-packages/onnxruntime/__init__.py")))
     signatures = []
     for file in files:
         try:
             st = file.stat()
-            signatures.append(f"{st.st_mtime_ns}:{st.st_size}")
+            signatures.append(f"{file}:{st.st_mtime_ns}:{st.st_size}")
         except OSError:
             signatures.append("missing")
     return ":".join(signatures)
