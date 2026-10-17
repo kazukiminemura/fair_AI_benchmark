@@ -5,7 +5,10 @@ const vm = require('node:vm');
 
 const context = vm.createContext({ document: {
   createElement: (tag) => ({ tag, children: [], textContent: '',
-    setAttribute() {}, appendChild(child) { this.children.push(child); } }),
+    attributes: {}, handlers: {}, setAttribute(name, value) { this.attributes[name] = value; },
+    addEventListener(name, handler) { this.handlers[name] = handler; },
+    replaceChildren() { this.children = []; },
+    appendChild(child) { this.children.push(child); } }),
 } });
 const source = fs.readFileSync(require.resolve('../fairbench/web/app.js'), 'utf8');
 vm.runInContext(source.split('/* ------------------------------------------------------------------ wire */')[0], context);
@@ -159,6 +162,16 @@ assert(probedCard.children.some((child) => child.textContent.includes('行列サ
 const minimalSizedCard = { children: [], appendChild(child) { this.children.push(child); } };
 context.renderPrecisionRates(minimalSizedCard, [sizedRow], 'cpu');
 assert.equal(minimalSizedCard.children.length, 4);
+const detailDiagram = { children: [], appendChild(child) { this.children.push(child); }, replaceChildren() { this.children = []; } };
+const detailHeading = {};
+context.document.getElementById = (id) => ({ deviceMeasurement: detailDiagram, measurementTitle: detailHeading })[id];
+context.renderDeviceMeasurement([]);
+assert.deepEqual(detailDiagram.children[0].children.map((button) => button.textContent), ['CPU', 'GPU', 'NPU']);
+detailDiagram.children[0].children[0].handlers.click();
+assert.equal(detailHeading.textContent, 'CPUの転送と推論');
+assert.equal(detailDiagram.children[0].children[0].attributes['aria-pressed'], 'true');
+detailDiagram.children[0].children[2].handlers.click();
+assert.equal(detailHeading.textContent, 'NPUの転送と推論');
 const controls = Object.fromEntries(['optSuite', 'optMode', 'workloadChecks', 'modeField', 'requestsField', 'optGemmSize',
   'optRequests', 'optRepeats', 'optSeconds', 'optThreads', 'optBackend', 'optPower', 'optBattery', 'targetChecks']
   .map((id) => [id, { value: '', checked: false }]));
@@ -179,6 +192,8 @@ for (const [suite, mode, customVisible, modeVisible, requestsVisible, sizeDisabl
   assert.equal(controls.optGemmSize.disabled, sizeDisabled);
 }
 const markup = fs.readFileSync(require.resolve('../fairbench/web/index.html'), 'utf8');
+assert(!markup.split('id="overview"')[1].split('</section>')[0].includes('measurement-diagram'));
+assert(markup.includes('class="measurement-diagram" data-view="performance"'));
 assert(markup.includes('<details class="run-advanced">'));
 for (const removed of ['optQuick', 'optInt8', 'optCheck']) assert(!markup.includes(`id="${removed}"`));
 assert(!markup.includes('<option value="peak">'));

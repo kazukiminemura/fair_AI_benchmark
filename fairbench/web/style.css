@@ -373,6 +373,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--cyan); outline-
 .device-selector[aria-pressed="true"] { border-color: currentColor; background: #edf3fc; }
 .device-selector:hover { text-decoration: underline; }
 .device-selector:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.measurement-devices { display: flex; gap: 8px; margin: 12px 0; }
 .measurement-precision + .measurement-precision { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
 .measurement-precision h4 { margin: 12px 0 6px; }
 .device-card-heading span { color: #325d44; background: #edf7ef; padding: 3px 8px; border-radius: 5px; font-size: 12px; }

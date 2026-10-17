@@ -42,14 +42,14 @@
       </div>
       <div class="overview-status" id="overviewStatus" role="status">保存済みの計測結果を確認しています。</div>
       <div class="device-summary" id="overviewDevices"></div>
-      <section class="measurement-diagram" aria-labelledby="measurementTitle">
-        <h3 id="measurementTitle">転送込みの性能と、推論部分の性能</h3>
-        <div id="overviewMeasurement"></div>
-      </section>
     </section>
     <div class="detail-header" data-view="performance devices environment history method activity" hidden>
       <a class="text-link" href="#overview">← 概要に戻る</a><h2 id="viewTitle"></h2>
     </div>
+    <section class="measurement-diagram" data-view="performance" aria-labelledby="measurementTitle" hidden>
+      <h3 id="measurementTitle">転送と推論</h3>
+      <div id="deviceMeasurement"></div>
+    </section>
 
     <section class="hero" id="hero" data-view="performance environment" hidden>
       <div class="hero-main">
