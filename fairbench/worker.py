@@ -119,6 +119,15 @@ def _run_throughput(backend, compiled, built, target, cfg, feed, result, job):
 
     from .throughput import measure, measure_processes, parallel_memory_budget
 
+    if target.kind == 'gpu' and not cfg.resident_io and (
+            target.backend == 'openvino' or target.device in getattr(backend, '_IO_DEVICES', {})):
+        cfg = replace(cfg, resident_io=True)
+        job = {**job, 'cfg': cfg.to_dict()}
+    if cfg.resident_io:
+        result['measurement_scope'] = ('device_resident' if target.kind == 'gpu'
+                                       and target.device in getattr(backend, '_IO_DEVICES', {})
+                                       else 'persistent_requests')
+
     candidates = [cfg.requests] if cfg.requests else ([1, 2, 4, 8, 16, 32] if target.kind == "npu" else [1, 2, 4, 8])
     trials = []
     successful = []

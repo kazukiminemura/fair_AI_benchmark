@@ -12,7 +12,21 @@ so a reader can tell a clean number from a noisy one.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import asdict, dataclass, field
+
+
+def inference_samples(cfg, compute_samples):
+    """Bounded sustained sampling; budget counts inference, not output validation."""
+    started = time.perf_counter()
+    minimum = 5 if cfg.quick else max(30, cfg.min_iterations)
+    seconds = 0 if cfg.quick else max(0, cfg.min_seconds)
+    limit = max(minimum, min(cfg.max_iterations, 2000))
+    for index in range(limit):
+        if index >= minimum and (sum(compute_samples) / 1000 >= seconds
+                                 or (cfg.max_seconds and time.perf_counter() - started >= cfg.max_seconds)):
+            break
+        yield index
 
 
 @dataclass
