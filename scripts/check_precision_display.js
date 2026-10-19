@@ -92,6 +92,7 @@ for (const filename of (fs.existsSync(reportDirectory) ? fs.readdirSync(reportDi
     'import json, sys; from fairbench.report import load, json_safe; print(json.dumps(json_safe(load(sys.argv[1]))))',
     require('node:path').join(reportDirectory, filename)], { encoding: 'utf8', cwd: require('node:path').join(__dirname, '..') }));
   for (const kind of ['cpu', 'gpu']) {
+    if (report.schema !== 'fairbench.result/1') continue;
     const card = { children: [], appendChild(child) { this.children.push(child); } };
     context.renderPrecisionRates(card, report.results, kind);
     assert.equal(card.children[0].textContent, 'FP16', filename);
@@ -155,6 +156,8 @@ for (const kind of ['cpu', 'gpu', 'npu']) {
       timing_breakdown: { available: true, compute_ms: 2 } };
     const unit = precision === 'int8' ? 'TOPS' : 'TFLOPS';
     assert.equal(context.formatInferenceRate(row), `8.000 ${unit}`);
+    assert.equal(context.formatInferenceRate({ ...row, measurement_mode: 'throughput' }), `2.000 ${unit}`);
+    assert.equal(context.formatE2ERate({ ...row, timing_breakdown: { available: true, compute_ms: 2, e2e_ms: 4 } }), `4.000 ${unit}`);
     const card = { children: [], appendChild(child) { this.children.push(child); } };
     context.renderPrecisionRates(card, [row], kind);
     const primary = card.children.find((child) => child.className?.includes('precision-index') && child.textContent === '8.000');
@@ -236,7 +239,7 @@ assert(heroHosts.heroStats.children[0].innerHTML.includes('>2<'));
 assert(source.includes('${r.targets || 0} 組み合わせ'));
 console.log('Disclosure checks passed: INT8 conversion/source labels, stored grade pairs, combination labels and legacy/default views.');
 const controls = Object.fromEntries(['optSuite', 'optMode', 'workloadChecks', 'modeField', 'requestsField', 'optGemmSize',
-  'optRequests', 'optRepeats', 'optSeconds', 'optThreads', 'optBackend', 'optPower', 'optBattery', 'targetChecks']
+  'optRequests', 'optRepeats', 'optThreads', 'optBackend', 'optPower', 'optBattery', 'targetChecks']
   .map((id) => [id, { value: '', checked: false }]));
 context.document.getElementById = (id) => controls[id];
 for (const [suite, mode, customVisible, modeVisible, requestsVisible, sizeDisabled] of [
@@ -266,7 +269,6 @@ assert(markup.includes('<option selected>4096</option>'));
   controls.workloadChecks.querySelectorAll = () => [{ value: 'precision_gemm_fp16' }, { value: 'precision_gemm_int8' }];
   Object.assign(controls.optGemmSize, { value: '4096' });
   Object.assign(controls.optRepeats, { value: '3' });
-  Object.assign(controls.optSeconds, { value: '4' });
   Object.assign(controls.optBackend, { value: 'all' });
   context.toast = () => {};
   let sent;
@@ -288,7 +290,7 @@ assert(markup.includes('<option selected>4096</option>'));
     assert.equal(sent.check_correctness, true);
     assert.equal(sent.include_int8, true);
     assert.equal(sent.repeats, 3);
-    assert.equal(sent.min_seconds, 4);
+    assert(!Object.hasOwn(sent, 'min_seconds'));
     assert(!Object.hasOwn(sent, 'quick'));
   }
   console.log('Simplified settings passed: conditional fields, fixed correctness, explicit timing and mode payloads.');

@@ -21,7 +21,7 @@ import numpy as np
 from ..config import RunConfig
 from ..devices import Target
 from ..models import BuiltModel
-from ..stats import median
+from ..stats import inference_samples, median, summarise
 from .base import Backend, BackendError, CompiledModel
 
 CACHE_DIR = Path(".cache") / "openvino"
@@ -213,9 +213,8 @@ class OpenVinoBackend(Backend):
                 for name, value in feed.items():
                     np.copyto(inputs[name], value)
                 request.infer(share_outputs=True)
-            phases = {"h2d_ms": [], "compute_ms": [], "d2h_ms": []}
-            sample_count = 1 if cfg.quick else max(10, min(30, cfg.min_iterations))
-            for _ in range(sample_count):
+            phases = {"h2d_ms": [], "compute_ms": [], "d2h_ms": [], "e2e_ms": []}
+            for _ in inference_samples(cfg, phases['compute_ms']):
                 started = time.perf_counter()
                 for name, value in feed.items():
                     np.copyto(inputs[name], value)
@@ -230,9 +229,11 @@ class OpenVinoBackend(Backend):
                 phases["h2d_ms"].append((prepared - started) * 1000)
                 phases["compute_ms"].append((computed - prepared) * 1000)
                 phases["d2h_ms"].append((collected - computed) * 1000)
+                phases["e2e_ms"].append((collected - started) * 1000)
             return {"available": True, "method": "synchronous_infer_request_host_buffers",
                     "transfer_scope": "host_buffers", "internal_transfers_in_compute": target.kind != "cpu",
-                    "samples": sample_count, "phase_samples_ms": phases,
+                    "samples": len(phases['compute_ms']), "phase_samples_ms": phases,
+                    "compute_statistics": summarise(phases['compute_ms']).to_dict(),
                     **{name: median(values) for name, values in phases.items()},
                     "note": "Host input-buffer copy / synchronous InferRequest / host output copy. Runtime-internal device transfers remain inside inference; this is not isolated hardware transfer or kernel time."}
         except Exception as exc:

@@ -20,7 +20,7 @@ import numpy as np
 from ..config import RunConfig
 from ..devices import Target
 from ..models import BuiltModel
-from ..stats import median
+from ..stats import inference_samples, median, summarise
 from .base import Backend, BackendError, CompiledModel
 
 
@@ -215,9 +215,8 @@ class OrtBackend(Backend):
         try:
             binding, tensors = self._resident_binding(compiled, feed, target, warmup=1 if cfg.quick else max(2, cfg.warmup))
             reference = compiled.handle.run(None, feed)
-            phases = {"h2d_ms": [], "compute_ms": [], "d2h_ms": []}
-            sample_count = 1 if cfg.quick else max(10, min(30, cfg.min_iterations))
-            for _ in range(sample_count):
+            phases = {"h2d_ms": [], "compute_ms": [], "d2h_ms": [], "e2e_ms": []}
+            for _ in inference_samples(cfg, phases['compute_ms']):
                 started = time.perf_counter()
                 for name, tensor in tensors.items():
                     tensor.update_inplace(np.ascontiguousarray(feed[name]))
@@ -234,7 +233,9 @@ class OrtBackend(Backend):
                 phases["h2d_ms"].append((uploaded - started) * 1000)
                 phases["compute_ms"].append((computed - uploaded) * 1000)
                 phases["d2h_ms"].append((downloaded - computed) * 1000)
-            return {"available": True, "method": "synchronized_host_wall_io_binding", "samples": sample_count,
+                phases["e2e_ms"].append((downloaded - started) * 1000)
+            return {"available": True, "method": "synchronized_host_wall_io_binding", "samples": len(phases['compute_ms']),
+                    "compute_statistics": summarise(phases['compute_ms']).to_dict(),
                     "transfer_scope": "host_buffers" if host_buffers else "device_io",
                     "internal_transfers_in_compute": internal_transfers,
                     **{name: median(values) for name, values in phases.items()}, "phase_samples_ms": phases,

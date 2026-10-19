@@ -49,11 +49,19 @@ function formatComputeRate(row) {
     : `${fmt(row.flops_per_s / 1e12, 3)} TFLOPS`;
 }
 function formatInferenceRate(row) {
-  if (row.measurement_scope === 'device_resident') return formatComputeRate(row);
+  if (row.measurement_scope === 'device_resident' || ['throughput', 'peak'].includes(row.measurement_mode)) return formatComputeRate(row);
   const timing = row.timing_breakdown;
   if (!timing?.available || !Number.isFinite(timing.compute_ms) || timing.compute_ms <= 0
     || !Number.isFinite(row.flops) || row.flops <= 0) return '分離不可';
   return formatComputeRate({ ...row, flops_per_s: row.flops / (timing.compute_ms / 1000) });
+}
+function formatE2ERate(row) {
+  const timing = row.timing_breakdown;
+  if (timing?.available && Number.isFinite(timing.e2e_ms) && timing.e2e_ms > 0
+    && Number.isFinite(row.flops) && row.flops > 0) {
+    return formatComputeRate({ ...row, flops_per_s: row.flops / (timing.e2e_ms / 1000) });
+  }
+  return formatComputeRate(row);
 }
 function precisionRateNote(row, precision) {
   if (!row) return '';
@@ -87,16 +95,20 @@ function renderPrecisionRates(card, rows, kind, { details = false } = {}) {
       ? 'この機器・ランタイムでは対応する精度の行列演算を実行できません。詳細は測定データを確認してください。'
       : (failed?.error || 'この機器・ランタイムでは実行できません').slice(0, 140);
     const inference = best ? formatInferenceRate(best) : null;
+    if (best && ['throughput', 'peak'].includes(best.measurement_mode)) {
+      card.appendChild(el('p', { class: 'device-path' }, '並列処理の合計スループット（単発推論性能とは測定条件が異なります）'));
+    }
     const value = el('div', { class: 'device-index precision-index' }, best ? inference.replace(` ${unit}`, '') : failed ? '実行不可' : '未計測');
     const precisionNote = precisionRateNote(best, precision);
     if (precisionNote) value.setAttribute('title', precisionNote);
     if (best) {
       if (inference !== '分離不可') value.appendChild(el('small', {}, unit));
       value.appendChild(el('small', { class: 'inference-rate',
-        title: best.measurement_scope === 'device_resident'
-          ? 'デバイス常駐測定のため、転送込みE2Eは取得していません。'
-          : '入力転送・準備から出力転送・取得までを含む測定値です。',
-      }, best.measurement_scope === 'device_resident' ? '（E2E 未取得）' : `（E2E ${formatComputeRate(best)}）`));
+        title: ['device_resident', 'persistent_requests'].includes(best.measurement_scope)
+          ? '固定バッファの並列測定のため、独立した転送込みE2Eは取得していません。'
+          : best.timing_breakdown?.e2e_ms > 0 ? '推論と同じ試行で測定した入力準備・転送から出力取得までの全体時間です。'
+            : '旧結果：推論とは別測定のE2Eです。再計測すると同じ試行の値になります。',
+      }, ['device_resident', 'persistent_requests'].includes(best.measurement_scope) ? '（E2E 未取得）' : `（E2E ${formatE2ERate(best)}）`));
     }
     card.appendChild(value);
     if (!details) continue;
@@ -140,6 +152,14 @@ function renderPrecisionRates(card, rows, kind, { details = false } = {}) {
     }
     if (best) {
       const timing = best.timing_breakdown || {};
+      if (details && timing.available) {
+        card.appendChild(el('p', { class: 'device-path' },
+          `推論 ${timing.compute_samples || '未記録'}サンプル・試行ごとの中央値を集約`
+          + (Number.isFinite(timing.compute_cv_max) ? ` / 最大CV ${fmt(timing.compute_cv_max * 100, 1)}%`
+            + (timing.compute_cv_max > 0.05 ? '（ばらつきあり）' : '') : '')
+          + (Number.isFinite(timing.compute_repeat_spread_pct) ? ` / 推論の試行間差 ${fmt(timing.compute_repeat_spread_pct, 1)}%`
+            + (timing.compute_repeat_spread_pct > 5 ? '（不安定）' : '') : ' / 単一試行：再現性は未確認')));
+      }
       const hostBuffers = timing.transfer_scope === 'host_buffers';
       card.appendChild(el('p', { class: 'device-path', title: timing.note || '' }, timing.available
         ? `分離時間（別測定）: ${hostBuffers ? '入力準備・コピー' : '入力転送'} ${fmt(timing.h2d_ms, 3)} ms / ${hostBuffers ? kind.toUpperCase() + '推論（内部転送を含む場合あり）' : 'GPU常駐推論（同期込）'}${fmt(timing.compute_ms, 3)} ms / ${hostBuffers ? '出力取得・コピー' : '出力転送'} ${fmt(timing.d2h_ms, 3)} ms · ${timing.repeats_measured}回の中央値`
@@ -1099,7 +1119,6 @@ async function startRun() {
     requests: $('optSuite').value === 'peak' || $('optMode').value !== 'throughput' ? 0 : Number($('optRequests').value || 0),
     gemm_size: Number($('optGemmSize').value || 4096),
     repeats: Number($('optRepeats').value || 3),
-    min_seconds: Number($('optSeconds').value || 4),
     threads: $('optThreads').value ? Number($('optThreads').value) : null,
     include_int8: true,
     check_correctness: true,

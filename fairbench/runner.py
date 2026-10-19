@@ -454,10 +454,18 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         timings = [cell.get("timing_breakdown", {}) for cell in good]
         available_timings = [timing for timing in timings if timing.get("available")]
+        compute_medians = [timing['compute_ms'] for timing in available_timings]
         row["timing_breakdown"] = {
+            "compute_repeat_spread_pct": (max(compute_medians) - min(compute_medians))
+            / median(compute_medians) * 100 if len(compute_medians) > 1 and median(compute_medians) > 0 else None,
+            "compute_samples": sum(timing.get('samples', 0) for timing in available_timings),
+            "compute_cv_max": max((timing.get('compute_statistics', {}).get('cv_trimmed', 0)
+                                   for timing in available_timings), default=None),
             "available": bool(available_timings) and len(available_timings) == len(good),
             "repeats_measured": len(available_timings),
             "repeats": timings,
+            "e2e_ms": median([timing["e2e_ms"] for timing in available_timings])
+            if available_timings and all(timing.get("e2e_ms", 0) > 0 for timing in available_timings) else None,
             **{name: median([timing[name] for timing in available_timings]) if available_timings else None
                for name in ("h2d_ms", "compute_ms", "d2h_ms")},
             "method": available_timings[0].get("method") if available_timings else None,

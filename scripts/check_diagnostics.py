@@ -21,6 +21,12 @@ from fairbench.system import PowerInfo
 
 
 def main() -> None:
+    from fairbench.stats import inference_samples
+    for cfg, expected in ((RunConfig(min_seconds=5), 50), (RunConfig(quick=True), 5)):
+        samples = []
+        for _ in inference_samples(cfg, samples):
+            samples.append(100.0)
+        assert len(samples) == expected
     for values in ([], [float("nan"), float("inf"), -float("inf"), None]):
         empty = summarise(values)
         assert empty.count == 0 and empty.outliers == 0 and type(empty.outliers) is int
@@ -106,12 +112,17 @@ def main() -> None:
     with patch.object(backend.ort.OrtValue, "ortvalue_from_numpy", return_value=MagicMock()):
         timing = backend.diagnose(compiled, SimpleNamespace(precision="fp16"), target, RunConfig(), {"x": output})
     assert timing["available"] and timing["samples"] >= 10
+    assert timing['e2e_ms'] >= timing['compute_ms']
+    for index, total in enumerate(timing['phase_samples_ms']['e2e_ms']):
+        assert math.isclose(total, sum(timing['phase_samples_ms'][phase][index]
+                                     for phase in ('h2d_ms', 'compute_ms', 'd2h_ms')))
     assert binding.synchronize_inputs.call_count == timing["samples"]
     assert binding.synchronize_outputs.call_count >= timing["samples"]
     assert compiled.meta["compute_precisions"] == []
     with patch.object(backend, "_probe_gpu_precision") as profile, patch.object(backend.ort.OrtValue, "ortvalue_from_numpy", return_value=MagicMock()):
         quick_timing = backend.diagnose(compiled, built, target, quick, {"x": output})
-        assert quick_timing["available"] and quick_timing["samples"] == 1
+        assert quick_timing["available"] and quick_timing["samples"] == 5
+        assert quick_timing['e2e_ms'] >= quick_timing['compute_ms']
         profile.assert_not_called()
     binding.copy_outputs_to_cpu.return_value = [output * 2]
     with patch.object(backend.ort.OrtValue, "ortvalue_from_numpy", return_value=MagicMock()):
