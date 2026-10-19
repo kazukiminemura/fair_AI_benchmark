@@ -41,6 +41,17 @@ assert(unverifiedCard.children.some((child) => child.textContent === '再計測�
 const referenceRow = { kind: 'gpu', precision: 'int8', ok: true, unit: 'sample', units_per_s: 20,
   flops: 1e11, flops_per_s: null, latency_ms: 50, measurement_validity: 'model_only', target_label: 'Windows ML TensorRT-RTX GPU',
   timing_breakdown: { available: true, compute_ms: 25, e2e_ms: 50 } };
+const resultTable = context.document.createElement('table');
+context.document.getElementById = () => resultTable;
+context.renderTable({ results: [{ ...referenceRow, workload: 'precision_gemm_int8' },
+  { ...referenceRow, workload: 'failed', ok: false }] });
+const headers = resultTable.children[0].children[0].children.map((cell) => cell.textContent);
+const tableRows = resultTable.children[1].children;
+assert.equal(tableRows[1].children.length, headers.length);
+assert.equal(tableRows[1].children[headers.indexOf('推論性能')].textContent, '4.000 TOPS');
+assert.equal(tableRows[1].children[headers.indexOf('E2E性能')].textContent, '2.000 TOPS');
+assert.equal(tableRows[0].children[5].colSpan, headers.length - 5);
+context.document.getElementById = (id) => chartHosts[id];
 const referenceCard = { children: [], appendChild(child) { this.children.push(child); } };
 context.renderPrecisionRates(referenceCard, [referenceRow], 'gpu');
 const referenceValue = referenceCard.children.find((child) => child.textContent === '4.000');

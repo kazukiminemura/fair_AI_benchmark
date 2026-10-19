@@ -846,7 +846,7 @@ function renderRadar(rep) {
 function renderTable(rep) {
   const table = $('resultTable');
   const rows = (rep.results || []).slice().sort((a, b) => (a.workload.localeCompare(b.workload)) || ((b.units_per_s || 0) - (a.units_per_s || 0)));
-  const cols = ['device', 'workload', 'GEMM M×K×N', '指定精度', '実行情報', 'units/s', 'median ms', 'p90 ms', 'CV', '演算性能（測定範囲内）', '入力転送・準備 ms', '推論・同期 ms', '出力転送・取得 ms', '成功回数', 'host CPU s/inf', 'W', 'J/inf', 'compile ms', 'spread'];
+  const cols = ['device', 'workload', 'GEMM M×K×N', '指定精度', '実行情報', 'units/s', 'median ms', 'p90 ms', 'CV', '推論性能', 'E2E性能', '入力転送・準備 ms', '推論・同期 ms', '出力転送・取得 ms', '成功回数', 'host CPU s/inf', 'W', 'J/inf', 'compile ms', 'spread'];
   table.innerHTML = '';
   const thead = el('thead');
   const tr = el('tr');
@@ -888,7 +888,10 @@ function renderTable(rep) {
       cells.push(el('td', { class: 'num' }, fmt(r.latency_ms, 3)));
       cells.push(el('td', { class: 'muted' }, fmt(lat.p90_ms, 3)));
       cells.push(el('td', { class: (lat.cv_trimmed ?? lat.cv) > 0.05 ? 'flag' : 'muted', title: `trimmed CV ${lat.cv_trimmed !== undefined ? (lat.cv_trimmed * 100).toFixed(2) + '%' : 'n/a'}, ${lat.count || 0} iterations` }, lat.cv !== undefined ? (lat.cv * 100).toFixed(1) + '%' : '—'));
-      cells.push(el('td', { class: 'num', title: 'モデルの演算数 × 実測推論数からの換算値。メーカーの理論ピーク性能とは異なります。' }, formatComputeRate(r)));
+      cells.push(el('td', { class: 'num', title: '推論区間の実測時間に基づく性能。並列測定では合計スループット。' }, formatInferenceRate(r)));
+      const e2eAvailable = r.measurement_scope !== 'device_resident'
+        || r.timing_breakdown?.available && Number.isFinite(r.timing_breakdown.e2e_ms) && r.timing_breakdown.e2e_ms > 0;
+      cells.push(el('td', { class: 'num', title: '入力から出力までの全体区間の実測時間に基づく性能。' }, e2eAvailable ? formatE2ERate(r) : '未取得'));
       const timing = r.timing_breakdown || {};
       for (const phase of ['h2d_ms', 'compute_ms', 'd2h_ms']) {
         cells.push(el('td', { class: 'num', title: timing.note || '分離時間は未取得' }, timing.available ? fmt(timing[phase], 3) : '—'));
