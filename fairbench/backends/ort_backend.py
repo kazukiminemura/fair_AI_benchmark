@@ -164,7 +164,7 @@ class OrtBackend(Backend):
 
     def _resident_binding(self, compiled: CompiledModel, feed: dict[str, np.ndarray],
                           target: Target, warmup: int):
-        device = self._IO_DEVICES.get(target.device, "cpu")
+        device = self.io_device(target)
         device_id = int(self._provider_options(target, compiled.precision).get("device_id", 0))
         binding = compiled.handle.io_binding()
         tensors = {name: self.ort.OrtValue.ortvalue_from_numpy(np.array(value, copy=True, order="C") if device == "cpu" else np.ascontiguousarray(value), device, device_id)
@@ -180,6 +180,13 @@ class OrtBackend(Backend):
             binding.bind_ortvalue_output(name, value)
 
         return binding, tensors
+
+    def io_device(self, target: Target) -> str:
+        # Windows ML owns its D3D device; OrtValue's default DML allocator is
+        # not guaranteed to share that device. Keep host buffers for this path.
+        if target.backend == 'winml' and target.device == 'DmlExecutionProvider':
+            return 'cpu'
+        return self._IO_DEVICES.get(target.device, 'cpu')
 
     def diagnose(self, compiled: CompiledModel, built: BuiltModel, target: Target,
                  cfg: RunConfig, feed: dict[str, np.ndarray]) -> dict[str, Any]:
@@ -205,7 +212,7 @@ class OrtBackend(Backend):
                 compiled.meta["compute_precision_source"] = "ORT CPU compute-node input types; instruction/accumulator precision unverified"
             except Exception as exc:
                 compiled.meta["compute_precision_source"] = f"Precision probe unavailable: {exc}"
-        host_buffers = target.kind in ("cpu", "npu") or target.device == "OpenVINOExecutionProvider"
+        host_buffers = self.io_device(target) == 'cpu'
         internal_transfers = host_buffers and target.kind != "cpu"
         if target.kind not in ("cpu", "gpu", "npu") or (target.kind == "gpu"
                 and target.device not in self._IO_DEVICES and not host_buffers):

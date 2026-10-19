@@ -83,6 +83,9 @@ def main() -> None:
     session.run.return_value = [output]
     compiled = CompiledModel(session, 0, "fp16", ["y"])
     target = Target("gpu", "ort", "DmlExecutionProvider", "gpu", "unknown", "GPU")
+    winml_dml = Target('winml-gpu', 'winml', 'DmlExecutionProvider', 'gpu', 'intel', 'Windows ML GPU')
+    assert backend.io_device(target) == 'dml'
+    assert backend.io_device(winml_dml) == 'cpu'
     event = {"cat": "Node", "name": "DmlFusedNode_0_0_kernel_time", "args": {
         "provider": target.device, "op_name": "DmlFusedNode_0_0", "input_type_shape": [{"float": [512, 512]}]}}
     for precision, dtype in (("fp16", "float16"), ("int8", "float")):
@@ -119,6 +122,11 @@ def main() -> None:
     assert binding.synchronize_inputs.call_count == timing["samples"]
     assert binding.synchronize_outputs.call_count >= timing["samples"]
     assert compiled.meta["compute_precisions"] == []
+    with patch.object(backend.ort.OrtValue, "ortvalue_from_numpy", return_value=MagicMock()) as allocate:
+        host_timing = backend.diagnose(compiled, built, winml_dml, quick, {'x': output})
+        assert host_timing['available'] and host_timing['transfer_scope'] == 'host_buffers'
+        assert host_timing['internal_transfers_in_compute']
+        assert allocate.call_args.args[1] == 'cpu'
     with patch.object(backend, "_probe_gpu_precision") as profile, patch.object(backend.ort.OrtValue, "ortvalue_from_numpy", return_value=MagicMock()):
         quick_timing = backend.diagnose(compiled, built, target, quick, {"x": output})
         assert quick_timing["available"] and quick_timing["samples"] == 5
