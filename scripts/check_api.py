@@ -133,6 +133,11 @@ def check_nullable_median() -> None:
 
 
 def main() -> None:
+    state = server.RunState()
+    completed = {"results": [{"ok": True}], "grade": {"letter": "A"}}
+    state.push({"event": "done", "report": completed})
+    assert state.snapshot()["report"] == completed
+    assert not state.snapshot()["events"]  # Do not duplicate the report in the event log.
     check_delete_inputs()
     check_numpy_json()
     check_nullable_median()

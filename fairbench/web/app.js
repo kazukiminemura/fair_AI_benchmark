@@ -308,7 +308,18 @@ async function loadState() {
   const runFile = state.run && state.run.result_file;
   const newest = state.results[0] && state.results[0].file;
 
-  if (!state.activeFile) {
+  if (state.followRun && state.run?.report) {
+    state.report = state.run.report;
+    renderAll();
+    if (runFile && !state.run.active) {
+      state.activeFile = runFile;
+      state.followRun = false;
+      const url = new URL(location.href);
+      url.searchParams.set('run', runFile);
+      history.replaceState(null, '', url);
+      renderRunList();
+    }
+  } else if (!state.activeFile && !state.followRun) {
     // First paint: show what the last run produced, or the newest file.
     const first = new URLSearchParams(location.search).get('run') || runFile || newest;
     if (first) await openResult(first);
@@ -318,7 +329,7 @@ async function loadState() {
     state.followRun = false;
     await openResult(runFile);
   }
-  schedule(state.run && state.run.active ? 1000 : 3000);
+  schedule(state.run && state.run.active ? 250 : 3000);
 }
 
 function schedule(ms) {

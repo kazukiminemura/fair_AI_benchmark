@@ -34,7 +34,7 @@ class WindowsMLBackend(OrtBackend):
         options.add_provider_for_devices([selected], target.options.get("provider_options", {}))
         started = time.perf_counter()
         try:
-            session = self.ort.InferenceSession(built.serialise(), sess_options=options, enable_fallback=False)
+            session = self.ort.InferenceSession(self._model_source(built, target), sess_options=options, enable_fallback=False)
         except Exception as exc:
             raise BackendError(f"Windows ML {target.device} ({target.kind}) could not load {built.key}: {exc}") from exc
         active = session.get_providers()

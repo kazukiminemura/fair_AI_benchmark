@@ -51,6 +51,16 @@ def main() -> None:
                 assert "MatMulIntegerToFloat" in compiled.meta["compute_kernels"], compiled.meta
 
     backend = OrtBackend()
+    amd_npu = Target("amd-npu", "ort", "VitisAIExecutionProvider", "npu", "amd", "AMD NPU")
+    amd_model = models.build_one("precision_gemm_int8", 512)
+    source = backend._model_source(amd_model, amd_npu)
+    from pathlib import Path
+    assert isinstance(source, str) and Path(source).is_absolute()
+    assert Path(source).read_bytes() == amd_model.serialise()
+    with patch.object(backend.ort, "InferenceSession", return_value=MagicMock()) as create:
+        backend.compile(amd_model, amd_npu, RunConfig(), "int8")
+        assert create.call_args.args[0] == source
+        assert create.call_args.kwargs["sess_options"].get_session_config_entry("session.disable_cpu_ep_fallback") == "1"
     assert resolve_workloads(RunConfig()) == ["precision_gemm_fp16", "precision_gemm_int8"]
     target = Target("test-gpu", "ort", "DmlExecutionProvider", "gpu", "unknown", "GPU")
     session = MagicMock()

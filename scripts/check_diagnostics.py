@@ -38,7 +38,12 @@ def main() -> None:
     assert math.isnan(summarise_repeats([10], [1]).spread_pct)
     assert summarise_repeats([10, 10, 10], [1, 1, 1]).spread_pct == 0
     args = cli.build_parser().parse_args(["run", "--quick"])
-    assert cli._config_from_args(args).repeats == 3
+    quick = cli._config_from_args(args)
+    assert quick.quick and quick.repeats == 1 and quick.gemm_size == 4096
+    assert cli._config_from_args(cli.build_parser().parse_args(["run", "--quick", "--gemm-size", "2048"])).gemm_size == 2048
+    assert quick.warmup == quick.min_iterations == quick.requests == 1
+    assert quick.max_iterations == 3 and quick.cooldown_seconds == quick.min_seconds == 0
+    assert not quick.measure_power and quick.check_correctness
     cell = {"ok": True, "target_id": "test", "kind": "gpu", "vendor": "unknown", "workload": "precision_gemm_fp16",
             "units_per_s": 10, "model": {"flops": 100}, "latency": {"median_ms": 1, "cv_trimmed": 0.10},
             "session": {"compute_precisions": ["f32"]}, "iterations": 100,
@@ -104,6 +109,10 @@ def main() -> None:
     assert binding.synchronize_inputs.call_count == timing["samples"]
     assert binding.synchronize_outputs.call_count >= timing["samples"]
     assert compiled.meta["compute_precisions"] == []
+    with patch.object(backend, "_probe_gpu_precision") as profile, patch.object(backend.ort.OrtValue, "ortvalue_from_numpy", return_value=MagicMock()):
+        quick_timing = backend.diagnose(compiled, built, target, quick, {"x": output})
+        assert quick_timing["available"] and quick_timing["samples"] == 1
+        profile.assert_not_called()
     binding.copy_outputs_to_cpu.return_value = [output * 2]
     with patch.object(backend.ort.OrtValue, "ortvalue_from_numpy", return_value=MagicMock()):
         timing = backend.diagnose(compiled, SimpleNamespace(precision="fp16"), target, RunConfig(), {"x": output})

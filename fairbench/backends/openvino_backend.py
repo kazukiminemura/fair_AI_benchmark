@@ -209,12 +209,12 @@ class OpenVinoBackend(Backend):
             request = compiled.handle.create_infer_request()
             inputs = {name: request.get_tensor(name).data for name in feed}
             reference = self.run(compiled, feed)
-            for _ in range(max(2, cfg.warmup)):
+            for _ in range(1 if cfg.quick else max(2, cfg.warmup)):
                 for name, value in feed.items():
                     np.copyto(inputs[name], value)
                 request.infer(share_outputs=True)
             phases = {"h2d_ms": [], "compute_ms": [], "d2h_ms": []}
-            sample_count = max(10, min(30, cfg.min_iterations))
+            sample_count = 1 if cfg.quick else max(10, min(30, cfg.min_iterations))
             for _ in range(sample_count):
                 started = time.perf_counter()
                 for name, value in feed.items():

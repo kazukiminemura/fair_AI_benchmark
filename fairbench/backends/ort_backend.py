@@ -98,6 +98,12 @@ class OrtBackend(Backend):
         return so
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _model_source(built: BuiltModel, target: Target) -> str | bytes:
+        if target.device == "VitisAIExecutionProvider":
+            return str(built.materialise().resolve())
+        return built.serialise()
+
     def compile(self, built: BuiltModel, target: Target, cfg: RunConfig, precision: str) -> CompiledModel:
         providers = [target.device]
         provider_options = [self._provider_options(target, precision)]
@@ -116,7 +122,7 @@ class OrtBackend(Backend):
         started = time.perf_counter()
         try:
             session = self.ort.InferenceSession(
-                built.serialise(),
+                self._model_source(built, target),
                 sess_options=so,
                 providers=providers,
                 provider_options=provider_options,
@@ -179,7 +185,7 @@ class OrtBackend(Backend):
                  cfg: RunConfig, feed: dict[str, np.ndarray]) -> dict[str, Any]:
         compiled.meta["compute_precisions"] = []
         compiled.meta["compute_precision_source"] = "Runtime does not expose arithmetic precision."
-        if target.kind == "cpu":
+        if target.kind == "cpu" and not cfg.quick:
             try:
                 events = self._profile_events(built, target, cfg, feed)
                 types = set()
@@ -204,13 +210,13 @@ class OrtBackend(Backend):
         if target.kind not in ("cpu", "gpu", "npu") or (target.kind == "gpu"
                 and target.device not in self._IO_DEVICES and not host_buffers):
             return {"available": False, "reason": "Device-resident I/O binding is unavailable for this provider."}
-        if target.kind == "gpu":
+        if target.kind == "gpu" and not cfg.quick:
             compiled.meta["gpu_precision"] = self._probe_gpu_precision(built, target, cfg, feed)
         try:
-            binding, tensors = self._resident_binding(compiled, feed, target, warmup=max(2, cfg.warmup))
+            binding, tensors = self._resident_binding(compiled, feed, target, warmup=1 if cfg.quick else max(2, cfg.warmup))
             reference = compiled.handle.run(None, feed)
             phases = {"h2d_ms": [], "compute_ms": [], "d2h_ms": []}
-            sample_count = max(10, min(30, cfg.min_iterations))
+            sample_count = 1 if cfg.quick else max(10, min(30, cfg.min_iterations))
             for _ in range(sample_count):
                 started = time.perf_counter()
                 for name, tensor in tensors.items():
@@ -254,7 +260,7 @@ class OrtBackend(Backend):
             if target.kind == "gpu":
                 options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
                 provider_options["provider_options"] = [self._provider_options(target, built.precision)]
-            session = self.ort.InferenceSession(built.serialise(), options, providers=[target.device], **provider_options)
+            session = self.ort.InferenceSession(self._model_source(built, target), options, providers=[target.device], **provider_options)
             try:
                 session.run(None, feed)
             finally:

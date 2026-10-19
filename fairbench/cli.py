@@ -125,13 +125,7 @@ def _config_from_args(args: argparse.Namespace) -> RunConfig:
         include_int8=not args.no_int8,
     )
     if args.quick:
-        cfg.warmup = 2
-        cfg.min_iterations = 5
-        cfg.min_seconds = 1.0
-        cfg.max_seconds = 15.0
-        cfg.repeats = 3
-        cfg.peak_max_size = 2048
-        cfg.cooldown_seconds = 0.5
+        cfg.apply_quick()
     if args.full:
         cfg.warmup = 8
         cfg.min_iterations = 30
@@ -593,8 +587,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--targets", nargs="*", default=None, help="target ids from `fairbench devices`")
     p_run.add_argument("--workloads", nargs="*", default=None, help="workload keys (default: a representative set)")
     p_run.add_argument("--out", default=None, help="output json path")
-    p_run.add_argument("--quick", action="store_true", help="fast, low-confidence settings")
-    p_run.add_argument("--full", action="store_true", help="slow, publication-grade settings")
+    duration = p_run.add_mutually_exclusive_group()
+    duration.add_argument("--quick", action="store_true", help="minimal smoke test: selected GEMM size (default 4096), one repeat, no power sampling or load search")
+    duration.add_argument("--full", action="store_true", help="slow, publication-grade settings")
     p_run.add_argument("--repeats", type=int, default=3)
     p_run.add_argument("--warmup", type=int, default=5)
     p_run.add_argument("--iterations", type=int, default=15, help="minimum timed iterations per cell")
