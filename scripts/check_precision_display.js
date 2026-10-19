@@ -70,7 +70,7 @@ for (const [kind, labels, values] of [
   context.renderPrecisionRates(card, rows, kind);
   assert.deepEqual(card.children.filter((child) => child.className === 'device-role').map((child) => child.textContent), labels);
   assert.deepEqual(card.children.filter((child) => child.className.includes('precision-index')).map((child) => child.textContent), values);
-  assert.equal(card.children.length, 4);
+  assert.equal(card.children.length, labels.length * 2);
   assert(card.children[1].children.some((child) => child.textContent === '（推論 分離不可）'));
   assert.equal(context.formatComputeRate({ kind, precision: 'int8', flops_per_s: 2e12 }), '2.000 TOPS');
   assert.equal(context.formatComputeRate({ kind, precision: 'fp16', flops_per_s: 2e12 }), '2.000 TFLOPS');
@@ -84,7 +84,11 @@ context.renderPrecisionRates(failedCard, [{ kind: 'gpu', precision: 'int8', ok: 
 assert.equal(failedCard.children[3].textContent, '実行不可');
 const reportDirectory = require('node:path').join(__dirname, '../results');
 for (const filename of (fs.existsSync(reportDirectory) ? fs.readdirSync(reportDirectory) : []).filter((name) => name.endsWith('.json'))) {
-  const report = JSON.parse(fs.readFileSync(require('node:path').join(reportDirectory, filename), 'utf8').replace(/^\uFEFF/, ''));
+  // Use the same legacy NaN/encoding normalization as the dashboard API.
+  const python = process.env.PYTHON || require('node:path').join(__dirname, '../.venv/Scripts/python.exe');
+  const report = JSON.parse(require('node:child_process').execFileSync(python, ['-c',
+    'import json, sys; from fairbench.report import load, json_safe; print(json.dumps(json_safe(load(sys.argv[1]))))',
+    require('node:path').join(reportDirectory, filename)], { encoding: 'utf8', cwd: require('node:path').join(__dirname, '..') }));
   for (const kind of ['cpu', 'gpu']) {
     const card = { children: [], appendChild(child) { this.children.push(child); } };
     context.renderPrecisionRates(card, report.results, kind);
@@ -267,7 +271,10 @@ assert(markup.includes('<option selected>4096</option>'));
     controls.optSuite.value = suite;
     controls.optMode.value = mode;
     controls.optRequests.value = '4';
+    controls.workloadChecks.querySelectorAll = () => [{ value: 'conv_vision' }];
     await context.startRun();
+    assert.deepEqual(sent.workloads, ['standard', 'peak'].includes(suite)
+      ? ['precision_gemm_fp16', 'precision_gemm_int8'] : ['conv_vision']);
     assert.equal(sent.mode, expectedMode);
     assert.equal(sent.requests, requests);
     assert.equal(sent.gemm_size, 4096);
