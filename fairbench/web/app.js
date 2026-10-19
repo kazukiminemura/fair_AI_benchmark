@@ -86,19 +86,26 @@ function renderPrecisionRates(card, rows, kind, { details = false } = {}) {
     const failureReason = failed && /Native .*GEMM|NOT_IMPLEMENTED|could not load/.test(failed.error || '')
       ? 'この機器・ランタイムでは対応する精度の行列演算を実行できません。詳細は測定データを確認してください。'
       : (failed?.error || 'この機器・ランタイムでは実行できません').slice(0, 140);
-    const value = el('div', { class: 'device-index precision-index' }, best ? fmt(best.flops_per_s / 1e12, 3) : failed ? '実行不可' : '未計測');
+    const inference = best ? formatInferenceRate(best) : null;
+    const value = el('div', { class: 'device-index precision-index' }, best ? inference.replace(` ${unit}`, '') : failed ? '実行不可' : '未計測');
     const precisionNote = precisionRateNote(best, precision);
     if (precisionNote) value.setAttribute('title', precisionNote);
     if (best) {
-      value.appendChild(el('small', {}, unit));
+      if (inference !== '分離不可') value.appendChild(el('small', {}, unit));
       value.appendChild(el('small', { class: 'inference-rate',
         title: best.measurement_scope === 'device_resident'
-          ? '主値もデバイス常駐測定です。内部変換や同期を含み、純粋なカーネル性能ではありません。'
-          : '分離時間の別測定から換算した参考値です。同期・内部変換を含み、純粋なカーネル性能ではありません。分離時間がなければ推定しません。',
-      }, `（推論 ${formatInferenceRate(best)}）`));
+          ? 'デバイス常駐測定のため、転送込みE2Eは取得していません。'
+          : '入力転送・準備から出力転送・取得までを含む測定値です。',
+      }, best.measurement_scope === 'device_resident' ? '（E2E 未取得）' : `（E2E ${formatComputeRate(best)}）`));
     }
     card.appendChild(value);
     if (!details) continue;
+    if (failed) {
+      const diagnostic = el('details', { class: 'device-path' });
+      diagnostic.appendChild(el('summary', {}, `${precision.toUpperCase()} 失敗の詳細（コピーできます）`));
+      diagnostic.appendChild(el('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere' }, failed.error || '詳細は記録されていません'));
+      card.appendChild(diagnostic);
+    }
     card.appendChild(el('p', { class: 'device-definition', title: failed?.error || '' }, best
       ? `モデル ${precision.toUpperCase()} / ${(best.gpu_precision || best.session?.gpu_precision)?.available ? '演算入力' : '実行'} ${formatExecutionPrecision(best)} · ${best.target_label || best.target_id} · ${best.repeats_ok || 0}回`
       : failed ? `${precision.toUpperCase()}: ${failureReason}` : `${precision.toUpperCase()}の測定値がありません`));
@@ -164,15 +171,15 @@ function renderMeasurementDiagram(host, rows, kind = 'gpu', precision = 'fp16') 
       ? `${fmt(timing[field], 3)} ms` : '未取得';
     step.appendChild(el('span', { class: 'measurement-duration' }, duration));
     step.appendChild(el('span', {}, description));
-    if (field === 'compute_ms') step.appendChild(el('b', {}, '括弧内の「推論」はこの区間'));
+    if (field === 'compute_ms') step.appendChild(el('b', {}, '主値の「推論」はこの区間'));
     flow.appendChild(step);
   }
   host.appendChild(flow);
-  host.appendChild(el('p', { class: 'measurement-scope' }, '標準測定の主値：入力転送 → 推論 → 出力転送を含む全体の処理速度'));
+  host.appendChild(el('p', { class: 'measurement-scope' }, '主値：推論時間から換算した性能 / 括弧内のE2E：入力転送 → 推論 → 出力転送を含む全体の処理速度'));
   if (row && !timing?.available) host.appendChild(el('p', { class: 'measurement-caption' }, 'この測定結果には転送・推論の分離時間がありません。全体の時間からは推定しません。'));
   if (hostBuffers) host.appendChild(el('p', { class: 'measurement-caption' }, '入出力はホスト側の準備・コピー時間です。デバイス内部の物理転送を個別に測った値ではありません。ランタイム内部の転送は推論時間に含まれる場合があります。'));
-  host.appendChild(el('p', { class: 'measurement-caption' }, '括弧内：演算数 ÷ 別測定の推論時間。純粋なカーネル時間ではありません。分離時間は各区間の中央値のため、合計が標準測定時間と一致するとは限りません。'));
-  host.appendChild(el('p', { class: 'measurement-caption' }, 'CPU・NPUも分離時間を取得できた場合だけ括弧内に換算値を表示します。分離できない場合は「分離不可」。デバイス常駐測定では主値も転送を除外します。'));
+  host.appendChild(el('p', { class: 'measurement-caption' }, '主値：演算数 ÷ 別測定の推論時間。純粋なカーネル時間ではありません。分離時間は各区間の中央値のため、合計がE2E測定時間と一致するとは限りません。'));
+  host.appendChild(el('p', { class: 'measurement-caption' }, 'CPU・NPUも分離時間を取得できた場合だけ主値に換算値を表示します。分離できない場合は「分離不可」。デバイス常駐測定では転送込みE2Eは未取得です。'));
 }
 function renderDeviceMeasurement(rows, selectedKind) {
   if (selectedKind) measurementKind = selectedKind;
@@ -827,6 +834,10 @@ function renderTable(rep) {
       const td = el('td', { class: 'muted' }, 'failed');
       td.colSpan = cols.length - 5;
       td.title = r.error || '';
+      const diagnostic = el('details');
+      diagnostic.appendChild(el('summary', {}, '失敗の詳細'));
+      diagnostic.appendChild(el('pre', { style: 'white-space:pre-wrap;overflow-wrap:anywhere' }, r.error || '詳細は記録されていません'));
+      td.appendChild(diagnostic);
       cells.push(td);
     } else {
       cells.push(el('td', { class: 'num' }, r.units_per_s >= 1000 ? fmtInt(r.units_per_s) : fmt(r.units_per_s)));
@@ -958,7 +969,7 @@ function renderLive() {
     const t = new Date((e.t || 0) * 1000).toLocaleTimeString();
     if (e.event === 'verify') {
       cls = e.ok ? 'ok' : 'fail';
-      txt = `verify ${e.target} — ${e.ok ? 'ok' : String(e.error || '').split('\n')[0]}`;
+      txt = `verify ${e.target} — ${e.ok ? 'ok' : String(e.error || '')}`;
     } else if (e.event === 'tuning') {
       cls = e.ok ? 'ok' : 'fail';
       txt = `探索 ${e.target} · ${e.workload} · 行列 ${e.size}×${e.size} / ${e.requests}並列 / ${e.threads}スレッド枠 · ${fmt((e.flops_per_s || 0) / 1e12, 3)} T-op/s`;
@@ -966,11 +977,12 @@ function renderLive() {
       cls = e.ok ? 'ok' : 'fail';
       txt = e.ok
         ? `${e.target_label} · ${e.workload} · ${fmt(e.units_per_s)} units/s · ${fmt(e.median_ms, 2)} ms`
-        : `${e.target_label} · ${e.workload} — ${String(e.error || '').split('\n')[0]}`;
+        : `${e.target_label} · ${e.workload} — ${String(e.error || '')}`;
     } else if (e.event === 'error') {
       cls = 'fail'; txt = e.error;
     } else { return; }
     const line = el('div', { class: 'log-line ' + cls });
+    if (cls === 'fail') line.style.whiteSpace = 'pre-wrap';
     line.innerHTML = `<span class="t">${t}</span><span>${esc(txt)}</span>`;
     log.appendChild(line);
   });

@@ -70,6 +70,7 @@ def spawn_worker(job: dict[str, Any], timeout: float, tag: str) -> dict[str, Any
             timeout=timeout,
         )
         stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
+        stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
         returncode = proc.returncode
     except FileNotFoundError as exc:
         return {
@@ -95,6 +96,14 @@ def spawn_worker(job: dict[str, Any], timeout: float, tag: str) -> dict[str, Any
             result.setdefault("worker_returncode", returncode)
             if not result.get("ok") and not result.get("error"):
                 result["error"] = _crash_hint(returncode, stderr)
+            if not result.get("ok"):
+                log_path = job_path.with_suffix('.log')
+                log_path.write_text(f"stdout:\n{stdout}\nstderr:\n{stderr}\nresult:\n"
+                                    + json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+                result["worker_log"] = str(log_path)
+                result["error"] = (result.get("error") or "worker failed") + f"\nWorker log: {log_path}"
+                if stderr.strip():
+                    result["error"] += "\n" + stderr.strip()[-8000:]
             return result
         except Exception as exc:
             return {

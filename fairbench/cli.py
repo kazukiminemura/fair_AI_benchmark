@@ -151,14 +151,14 @@ def _print_progress(ev: dict) -> None:
         print(f"  [tune] {ev['target']} {ev['workload']} {ev['size']} square / {ev['requests']} requests / {ev['threads']} threads: {rate:.3f} T-op/s {'ok' if ev['ok'] else 'failed'}", flush=True)
     elif kind == "verify":
         mark = c(" ok ", GREEN) if ev["ok"] else c("fail", RED)
-        suffix = "" if ev["ok"] else f"  {c(str(ev.get('error')).splitlines()[0][:90], DIM)}"
+        suffix = "" if ev["ok"] else f"  {c(str(ev.get('error')), DIM)}"
         print(f"  [{mark}] verify {ev['target']}{suffix}")
     elif kind == "cell":
         mark = c(" ok ", GREEN) if ev["ok"] else c("fail", RED)
         if ev["ok"]:
             detail = f"{ev['units_per_s']:9.2f} units/s   {ev['median_ms']:8.3f} ms"
         else:
-            detail = c(str(ev.get("error")).splitlines()[0][:90], DIM)
+            detail = c(str(ev.get("error")), DIM)
         print(f"  [{mark}] {ev['index']:>3}/{ev['total']} {ev['target_label']:<26s} {ev['workload']:<18s} {detail}")
 
 

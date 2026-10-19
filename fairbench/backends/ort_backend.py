@@ -199,7 +199,10 @@ class OrtBackend(Backend):
                 compiled.meta["compute_precision_source"] = "ORT CPU compute-node input types; instruction/accumulator precision unverified"
             except Exception as exc:
                 compiled.meta["compute_precision_source"] = f"Precision probe unavailable: {exc}"
-        if target.kind not in ("cpu", "gpu", "npu") or (target.kind == "gpu" and target.device not in self._IO_DEVICES):
+        host_buffers = target.kind in ("cpu", "npu") or target.device == "OpenVINOExecutionProvider"
+        internal_transfers = host_buffers and target.kind != "cpu"
+        if target.kind not in ("cpu", "gpu", "npu") or (target.kind == "gpu"
+                and target.device not in self._IO_DEVICES and not host_buffers):
             return {"available": False, "reason": "Device-resident I/O binding is unavailable for this provider."}
         if target.kind == "gpu":
             compiled.meta["gpu_precision"] = self._probe_gpu_precision(built, target, cfg, feed)
@@ -226,11 +229,11 @@ class OrtBackend(Backend):
                 phases["compute_ms"].append((computed - uploaded) * 1000)
                 phases["d2h_ms"].append((downloaded - computed) * 1000)
             return {"available": True, "method": "synchronized_host_wall_io_binding", "samples": sample_count,
-                    "transfer_scope": "host_buffers" if target.kind in ("cpu", "npu") else "device_io",
-                    "internal_transfers_in_compute": target.kind == "npu",
+                    "transfer_scope": "host_buffers" if host_buffers else "device_io",
+                    "internal_transfers_in_compute": internal_transfers,
                     **{name: median(values) for name, values in phases.items()}, "phase_samples_ms": phases,
-                    "note": ("Host input-buffer copy / synchronous inference / host output copy. NPU runtime-internal transfers remain inside inference; this is not isolated hardware transfer or kernel time."
-                             if target.kind in ("cpu", "npu") else "Synchronized host wall time, not GPU event/kernel time. Compute includes dispatch, synchronization, casts and quantization; model weights and I/O allocations are already resident. End-to-end inference is measured separately.")}
+                    "note": ("Host input-buffer copy / synchronous inference / host output copy. Accelerator runtime-internal transfers remain inside inference; this is not isolated hardware transfer or kernel time."
+                             if host_buffers else "Synchronized host wall time, not GPU event/kernel time. Compute includes dispatch, synchronization, casts and quantization; model weights and I/O allocations are already resident. End-to-end inference is measured separately.")}
         except Exception as exc:
             return {"available": False, "reason": f"I/O binding timing unavailable: {exc}"}
 

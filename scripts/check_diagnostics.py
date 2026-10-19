@@ -109,12 +109,13 @@ def main() -> None:
         timing = backend.diagnose(compiled, SimpleNamespace(precision="fp16"), target, RunConfig(), {"x": output})
     assert not timing["available"] and "does not match" in timing["reason"]
     binding.copy_outputs_to_cpu.return_value = [output]
-    for kind, provider in (("cpu", "CPUExecutionProvider"), ("npu", "VitisAIExecutionProvider")):
+    for kind, provider in (("cpu", "CPUExecutionProvider"), ("npu", "VitisAIExecutionProvider"),
+                           ("gpu", "OpenVINOExecutionProvider")):
         phase_target = Target(kind, "ort", provider, kind, "unknown", kind.upper())
         with patch.object(backend, "_profile_events", return_value=[]), patch.object(backend.ort.OrtValue, "ortvalue_from_numpy", return_value=MagicMock()):
             timing = backend.diagnose(compiled, built, phase_target, RunConfig(), {"x": output})
         assert timing["available"] and timing["transfer_scope"] == "host_buffers"
-        assert timing["internal_transfers_in_compute"] == (kind == "npu")
+        assert timing["internal_transfers_in_compute"] == (kind != "cpu")
     ov_backend = OpenVinoBackend.__new__(OpenVinoBackend)
     request = MagicMock()
     input_buffer = np.zeros_like(output)

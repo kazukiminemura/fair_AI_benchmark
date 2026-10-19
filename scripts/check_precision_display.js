@@ -20,7 +20,7 @@ assert(diagram.children[0].textContent.includes('2048×2048×2048'));
 const steps = diagram.children.find((child) => child.tag === 'ol').children;
 assert.deepEqual(steps.map((step) => step.children[0].textContent), ['入力転送', 'GPU常駐推論', '出力転送']);
 assert.deepEqual(steps.map((step) => step.children[1].textContent), ['2.001 ms', '0.754 ms', '3.449 ms']);
-assert(steps[1].children.some((child) => child.textContent.includes('括弧内')));
+assert(steps[1].children.some((child) => child.textContent.includes('主値')));
 context.renderMeasurementDiagram(diagram, []);
 assert(diagram.children.find((child) => child.tag === 'ol').children.every((step) => step.children[1].textContent === '未取得'));
 for (const kind of ['cpu', 'gpu', 'npu']) {
@@ -69,9 +69,11 @@ for (const [kind, labels, values] of [
   const card = { children: [], appendChild(child) { this.children.push(child); } };
   context.renderPrecisionRates(card, rows, kind);
   assert.deepEqual(card.children.filter((child) => child.className === 'device-role').map((child) => child.textContent), labels);
-  assert.deepEqual(card.children.filter((child) => child.className.includes('precision-index')).map((child) => child.textContent), values);
+  assert.deepEqual(card.children.filter((child) => child.className.includes('precision-index')).map((child) => child.textContent), ['分離不可', '分離不可']);
+  assert.deepEqual(card.children.filter((child) => child.className.includes('precision-index')).map((child) => child.children.at(-1).textContent),
+    values.map((value, index) => `（E2E ${value} ${index ? 'TOPS' : 'TFLOPS'}）`));
   assert.equal(card.children.length, labels.length * 2);
-  assert(card.children[1].children.some((child) => child.textContent === '（推論 分離不可）'));
+  assert(!card.children[1].children.some((child) => child.textContent === 'TFLOPS'));
   assert.equal(context.formatComputeRate({ kind, precision: 'int8', flops_per_s: 2e12 }), '2.000 TOPS');
   assert.equal(context.formatComputeRate({ kind, precision: 'fp16', flops_per_s: 2e12 }), '2.000 TFLOPS');
 }
@@ -155,7 +157,12 @@ for (const kind of ['cpu', 'gpu', 'npu']) {
     assert.equal(context.formatInferenceRate(row), `8.000 ${unit}`);
     const card = { children: [], appendChild(child) { this.children.push(child); } };
     context.renderPrecisionRates(card, [row], kind);
-    assert(card.children.flatMap((child) => child.children).some((child) => child.textContent === `（推論 8.000 ${unit}）`));
+    const primary = card.children.find((child) => child.className?.includes('precision-index') && child.textContent === '8.000');
+    assert(primary);
+    assert(primary.children.some((child) => child.textContent === `（E2E 2.000 ${unit}）`));
+    const residentCard = { children: [], appendChild(child) { this.children.push(child); } };
+    context.renderPrecisionRates(residentCard, [{ ...row, measurement_scope: 'device_resident' }], kind);
+    assert(residentCard.children.flatMap((child) => child.children).some((child) => child.textContent === '（E2E 未取得）'));
     assert.equal(context.formatInferenceRate({ ...row, measurement_scope: 'device_resident' }), `2.000 ${unit}`);
     for (const compute_ms of [0, -1, NaN, Infinity, null]) {
       assert.equal(context.formatInferenceRate({ ...row, timing_breakdown: { available: true, compute_ms } }), '分離不可');
