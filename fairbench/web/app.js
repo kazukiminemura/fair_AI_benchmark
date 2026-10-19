@@ -289,6 +289,11 @@ function toggles(sel, on) { document.querySelectorAll(sel).forEach((n) => n.clas
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
 function deviceColor(row) {
+  if (row.kind === 'cpu') {
+    const id = row.target_id || row.id || '';
+    const backend = row.backend || id.split(':')[0];
+    return { openvino: '#1e3a8a', ort: '#2563eb', winml: '#38bdf8' }[backend] || KIND_COLOR.cpu;
+  }
   if (row.kind === 'gpu') {
     const id = row.target_id || row.id || '';
     const backend = row.backend || id.split(':')[0];

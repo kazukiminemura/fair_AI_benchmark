@@ -81,6 +81,12 @@ assert(!context.formatExecutionPrecision({ gpu_precision: {
   arithmetic_precision: 'unverified', runtime_execution_verified: false,
 } }).includes('実行を確認'));
 assert.equal(new Set(gpuPaths.map((target_id) => context.deviceColor({ kind: 'gpu', target_id }))).size, 4);
+const cpuPaths = ['openvino:CPU', 'ort:CPUExecutionProvider', 'winml:CPUExecutionProvider:cpu:device1'];
+assert.equal(new Set(cpuPaths.map((target_id) => context.deviceColor({ kind: 'cpu', target_id }))).size, 3);
+for (const id of cpuPaths) {
+  assert.equal(context.deviceColor({ kind: 'cpu', id }), context.deviceColor({ kind: 'cpu', target_id: id }));
+  assert.equal(context.deviceColor({ kind: 'cpu', backend: id.split(':')[0] }), context.deviceColor({ kind: 'cpu', target_id: id }));
+}
 const inferenceWinner = { kind: 'gpu', precision: 'int8', ok: true, flops: 1e9,
   flops_per_s: 1e12, timing_breakdown: { available: true, compute_ms: 0.1 } };
 const transferWinner = { ...inferenceWinner, flops_per_s: 2e12,
