@@ -59,12 +59,16 @@ class RunState:
                 "progress": dict(self.progress),
                 "events": self.events[-200:],
                 "result_file": self.result_file,
+                "report": self.report,
                 "error": self.error,
                 "finished": bool(self.finished_at and not self.active),
             }
 
     def push(self, event: dict[str, Any]) -> None:
         with self.lock:
+            if event.get("event") == "done":
+                self.report = event.get("report")
+                return
             if event.get("event") == "cell":
                 self.progress = {"index": event.get("index", 0), "total": event.get("total", 0)}
             elif event.get("event") == "verify":
@@ -95,7 +99,7 @@ def _catalog(force: bool = False) -> dict[str, Any]:
             "defaults": {
                 "repeats": 3,
                 "min_seconds": 4.0,
-                "quick": {"repeats": 3, "min_seconds": 1.0},
+                "quick": {"repeats": 1, "min_seconds": 0.0, "gemm_size": 4096},
             },
         }
     return _CATALOG_CACHE
@@ -112,6 +116,7 @@ def _start_run(options: dict[str, Any]) -> dict[str, Any]:
         STATE.error = None
         STATE.events = []
         STATE.report = None
+        STATE.result_file = None
         STATE.progress = {"index": 0, "total": 0}
         STATE.plan = options
 
@@ -142,6 +147,8 @@ def _run_thread(options: dict[str, Any]) -> None:
             include_int8=bool(options.get("include_int8", True)),
             threads=options.get("threads"),
         )
+        if quick:
+            cfg.apply_quick()
         fp = system.collect()
         cfg.physical_cores = fp.cpu.physical_cores
         cfg.logical_cores = fp.cpu.logical_cores
@@ -159,11 +166,7 @@ def _run_thread(options: dict[str, Any]) -> None:
         path = report_mod.save(report)
         with STATE.lock:
             STATE.result_file = path.name
-            STATE.report = {
-                "headline": report_mod.headline(report),
-                "grade": report.get("grade"),
-                "results": [r for r in report.get("results", []) if r.get("ok")],
-            }
+            STATE.report = {key: value for key, value in report.items() if key != "cells"}
     except Exception as exc:
         with STATE.lock:
             STATE.error = f"{type(exc).__name__}: {exc}"

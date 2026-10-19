@@ -38,7 +38,7 @@ uv run fairbench run --gemm-size 2048
 uv run fairbench run --quick
 ```
 
-`--quick`は動作確認用です。指定方法の一覧は`uv run fairbench run --help`で確認できます。
+`--quick`は最小限の動作確認用です。標準ではFP16・INT8を4096×4096行列・各1回、ウォームアップ1回・本計測1回で実行します。行列サイズは`--gemm-size`で変更できます。電力測定・待機時間・負荷探索・演算精度プロファイルを省略し、正解照合と推論時間の分離測定（1サンプル）は残します。指定方法の一覧は`uv run fairbench run --help`で確認できます。
 
 ## 結果の各項目
 

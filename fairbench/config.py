@@ -19,6 +19,7 @@ class RunConfig:
     suite: str = "standard"
     workloads: list[str] = field(default_factory=list)  # empty => all
     include_int8: bool = True
+    quick: bool = False
 
     # ---- measurement policy ----------------------------------------------
     mode: str = "latency"  # latency | throughput
@@ -75,6 +76,20 @@ class RunConfig:
         # only way the CPU comparison means anything.
         cores = self.physical_cores or (os.cpu_count() or 4) // 2
         return max(1, cores)
+
+    def apply_quick(self) -> None:
+        """Smoke-test each selected workload without repeats or load exploration."""
+        self.quick = True
+        self.mode = "latency"
+        self.requests = 1
+        self.warmup = 1
+        self.min_iterations = 1
+        self.max_iterations = 3
+        self.min_seconds = 0.0
+        self.max_seconds = 2.0
+        self.repeats = 1
+        self.cooldown_seconds = 0.0
+        self.measure_power = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

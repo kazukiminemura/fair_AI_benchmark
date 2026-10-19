@@ -187,7 +187,8 @@ def run_suite(
     started = time.time()
     report_warnings: list[str] = []
     fp = fingerprint or system.collect()
-    system.measure_memory_bandwidth(fp.memory)
+    if not cfg.quick:
+        system.measure_memory_bandwidth(fp.memory)
     cfg.physical_cores = fp.cpu.physical_cores
     cfg.logical_cores = fp.cpu.logical_cores
 
@@ -289,7 +290,7 @@ def run_suite(
     # timed region, so the report can say whether a background process stole
     # the numbers. Costs ~3 s and cannot influence what it explains.
     background_load: float | None = None
-    if total and not getattr(cfg, "_skip_load_probe", False):
+    if total and not cfg.quick and not getattr(cfg, "_skip_load_probe", False):
         background_load = system.probe_background_load()
         report["background_load_percent"] = background_load
     if total == 0:
