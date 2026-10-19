@@ -308,26 +308,14 @@ async function loadState() {
   const runFile = state.run && state.run.result_file;
   const newest = state.results[0] && state.results[0].file;
 
-  if (state.followRun && state.run?.report) {
-    state.report = state.run.report;
-    renderAll();
-    if (runFile && !state.run.active) {
-      state.activeFile = runFile;
-      state.followRun = false;
-      const url = new URL(location.href);
-      url.searchParams.set('run', runFile);
-      history.replaceState(null, '', url);
-      renderRunList();
-    }
-  } else if (!state.activeFile && !state.followRun) {
+  if (!state.activeFile && !state.followRun) {
     // First paint: show what the last run produced, or the newest file.
     const first = new URLSearchParams(location.search).get('run') || runFile || newest;
     if (first) await openResult(first);
   } else if (state.followRun && state.run && !state.run.active && runFile) {
     // A run we started ourselves just finished - show its report once, then
     // stop following so the user's own selection is never overridden.
-    state.followRun = false;
-    await openResult(runFile);
+    if (await openResult(runFile)) state.followRun = false;
   }
   schedule(state.run && state.run.active ? 250 : 3000);
 }
@@ -346,9 +334,10 @@ async function openResult(file) {
     const url = new URL(location.href);
     url.searchParams.set('run', file);
     history.replaceState(null, '', url);
-  } catch (err) { toast('could not load ' + file, true); return; }
+  } catch (err) { toast('could not load ' + file, true); return false; }
   renderRunList();
   renderAll();
+  return true;
 }
 
 /* ------------------------------------------------------------------ render */
