@@ -196,7 +196,9 @@ def _run_throughput(backend, compiled, built, target, cfg, feed, result, job):
             "throughput_search": "fixed" if cfg.requests else f"best observed among {candidates} requests",
             "iterations": best["iterations"], "wall_s": best["wall_s"],
             "latency": stats.to_dict(), "units_per_s": units,
-            "flops_per_s": built.flops * units, "power": power,
+            "flops_per_s": None if result.get("measurement_validity") == "model_only" else built.flops * units,
+            "model_operations_per_s": built.flops * units if result.get("measurement_validity") == "model_only" else None,
+            "power": power,
             "host_cpu_seconds": best["host_cpu_seconds"],
             "host_cpu_seconds_per_inference": best["host_cpu_seconds"] / best["iterations"],
             "host_cpu_cores_used": best["host_cpu_seconds"] / best["wall_s"],
@@ -288,7 +290,8 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
     feed = built.make_inputs(cfg.input_seed)
 
     # ---- correctness --------------------------------------------------
-    if cfg.check_correctness:
+    if cfg.check_correctness or (precision == "int8" and (target.backend == "tensorrt" or (
+            target.backend == "winml" and target.device.casefold() == "nvtensorrtrtxexecutionprovider"))):
         base_key = "precision_gemm" if key.startswith("precision_gemm_") else (key[: -len("_int8")] if key.endswith("_int8") else key)
         ref = reference_fingerprint(base_key, cfg.input_seed, cfg.gemm_size)
         try:
@@ -314,6 +317,13 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
         if not result["correctness"]["valid"]:
             result.update(error="Output correctness could not be verified; throughput is not published.", phase="correctness")
             return result
+
+    if target.backend == "winml" and target.device.casefold() == "nvtensorrtrtxexecutionprovider" and precision == "int8":
+        evidence = compiled.meta.get("gpu_precision") or {}
+        if evidence.get("arithmetic_precision") != "int8" or not evidence.get("runtime_execution_verified"):
+            result["measurement_validity"] = compiled.meta["measurement_validity"] = "model_only"
+            warnings.append("INT8 QDQ model execution and correctness verified; internal INT8 GEMM arithmetic is "
+                            "unverified. Report model latency and requests/s as reference values, not native INT8 TOPS.")
 
     if cfg.mode == "throughput":
         measured = _run_throughput(backend, compiled, built, target, cfg, feed, result, job)
@@ -397,7 +407,8 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
             "wall_s": wall,
             "latency": stats.to_dict(),
             "units_per_s": units_per_s,
-            "flops_per_s": flops_per_s,
+            "flops_per_s": None if result.get("measurement_validity") == "model_only" else flops_per_s,
+            "model_operations_per_s": flops_per_s if result.get("measurement_validity") == "model_only" else None,
             "host_cpu_seconds": host_cpu,
             "host_cpu_seconds_per_inference": cpu_seconds_per_inference,
             "host_cpu_cores_used": cpu_seconds_per_inference / (stats.median_ms / 1000.0)

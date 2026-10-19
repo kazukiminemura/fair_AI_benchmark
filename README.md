@@ -106,11 +106,33 @@ Windows x64ではDirectMLとOpenVINOを導入します。GPU・NPUには対応�
 | --- | --- |
 | `verify` / `selftest` | デバイスの推論確認／対応ワークロードの診断。 |
 | `setup-winml` | Windows ML環境を準備。対応するWindows・ドライバーが必要。 |
+| `setup-winml --tensorrt` | Windows MLのTensorRT-RTXプロバイダーを導入し、NVIDIA GPUの公開を確認。 |
 | `setup-npu` | WindowsのAMD NPU（Vitis AI）環境を準備・推論確認。 |
 | `setup-gpu --cuda` | NVIDIA CUDA用の独立環境を準備。 |
+| `setup-gpu --tensorrt` | TensorRT 10・CUDA 12の独立環境を準備。NVIDIA GPUのINT8行列積を検証して測定。 |
 | `show results/<file>.json` | 保存結果を表示。 |
 
 ORTのCPU・DirectML・CUDA・メーカー専用版は同じPython環境に混在させないでください。追加のPython環境は`FAIRBENCH_PYTHON`でも指定できます。
+
+RTX 3060 TiなどのNVIDIA GPUでINT8を確認して測る場合:
+
+```powershell
+uv run fairbench setup-gpu --tensorrt
+uv run fairbench run --backend tensorrt --workloads precision_gemm_int8 --mode throughput --requests 1 --gemm-size 4096
+```
+
+準備後は画面の測定対象にも「TensorRT GPU」が現れます。TensorRT経路は同じONNXモデルを強い型付けでコンパイルし、測定対象エンジンのEngine Inspectorから行列積のINT8入力・重み（埋め込み重みの場合はINT8×INT8を示すtactic）を確認します。INT8の実装が選ばれていなければ失敗とし、CPU・FP32へ切り替えて成功扱いにはしません。実行成功後にエンジンのSHA256、Inspector情報、GPU名、TensorRT版を結果JSONへ保存します。INT8では`--quick`でも精度確認を省略せず、`--no-check`でも出力の正解照合を実施します。
+
+throughputはGPU常駐バッファで測定し、入力・出力転送を除外します。同期・起動・量子化／逆量子化の時間は含み、1 MAC = 2演算の行列積演算数からTOPSを算出します。蓄積精度と命令の逆アセンブルは未検証です。DirectMLの既存結果はINT8モデルの換算値として区別してください。TensorRTの確認方法は[NVIDIA Engine Inspector資料](https://docs.nvidia.com/deeplearning/tensorrt/10.x.x/inference-library/engine-tools.html)に基づきます。
+
+Windows ML経由で呼ぶ場合は、Windows MLカタログのTensorRT-RTX EPを使います（前述のTensorRT 10直接実行とは別のランタイムです）。[対応機器・条件](https://learn.microsoft.com/windows/ai/new-windows-ml/supported-execution-providers)を確認し、次を実行してください。
+
+```powershell
+uv run fairbench setup-winml --tensorrt
+uv run fairbench run --backend winml --targets NvTensorRTRTXExecutionProvider --workloads precision_gemm_fp16
+```
+
+画面では「機器を再検出」後に「Windows ML TensorRT-RTX GPU」を選べます。WinMLのデバイス指定APIで機器を固定し、CPUフォールバックを禁止します。測定セッション自体を1回プロファイルしてTensorRT-RTXへの割り当てを検証し、計測前にプロファイルを停止します。WinMLではホストバッファを使い、内部転送を含む推論時間として報告します。INT8 QDQモデルは実行・正解照合したうえで、内部INT8演算を検証できない場合も処理回数/秒と遅延を参考値として記録します。結果には`measurement_validity: model_only`を付け、`flops_per_s`はnullとします。モデル演算数×実測処理回数/秒の換算値を`model_operations_per_s`に分けて保存し、画面ではFP16・INT8の指定精度と実測性能を表示します。主値は推論区間、E2Eは入力から出力までの全体区間の実測時間に基づきます。4096角のGEMMなら`2×4096³×処理回数/秒÷10¹²`です。転送込みの測定では転送時間もこの換算値に含まれます。内部INT8演算の確認済み性能・メーカーの理論TOPSとは異なります。検証済みINT8を測る場合は`--backend tensorrt`を使ってください。
 
 スマホではPCと同じWi-Fiに接続し、「スマホで測る（QR）」→「LAN配信を開始する」から開きます。
 スマホ自身のブラウザでCPU・対応GPUのFP32を測定し、NPU・INT8は未対応です。PC版・理論値と直接比較できません。

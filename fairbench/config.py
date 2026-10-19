@@ -58,7 +58,7 @@ class RunConfig:
     relative_tolerance: float = 0.05  # 5% on fp compare (covers fp16/int8 drift)
 
     def __post_init__(self) -> None:
-        if self.backend not in ("all", "ort", "openvino", "winml"):
+        if self.backend not in ("all", "ort", "openvino", "winml", "tensorrt"):
             raise ValueError("backend must be all, ort, openvino or winml")
         if self.mode not in ("latency", "throughput", "peak"):
             raise ValueError("mode must be latency, throughput or peak")

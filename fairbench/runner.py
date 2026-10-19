@@ -395,6 +395,8 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "ok": False,
                     "error": base.get("error") or "all repeats failed",
                     "phase": base.get("phase"),
+                    "gemm_shape": (base.get("model") or {}).get("gemm_shape"),
+                    "operation_convention": (base.get("model") or {}).get("operation_convention"),
                 }
             )
             rows.append(row)
@@ -436,6 +438,11 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "repeats": rep.to_dict(),
             }
         )
+        if any(cell.get("measurement_validity", (cell.get("session") or {}).get("measurement_validity")) == "model_only"
+               for cell in good):
+            row["measurement_validity"] = "model_only"
+            row["model_operations_per_s"] = row["flops_per_s"]
+            row["flops_per_s"] = None
         precision_sets = [set((cell.get("session") or {}).get("compute_precisions", [])) for cell in good]
         row["compute_precisions"] = sorted(set.union(*precision_sets)) if precision_sets else []
         row["compute_precision_complete"] = bool(precision_sets) and all(precision_sets)
@@ -448,7 +455,12 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "tensor_precisions": sorted({value for probe in confirmed for value in probe["tensor_precisions"]}),
                 "repeats_measured": len(confirmed), "repeats": gpu_probes,
                 "evidence": sorted({probe["evidence"] for probe in confirmed}),
-                "arithmetic_precision": "unverified", "accumulator_precision": "unverified",
+                "arithmetic_precision": "int8" if len(confirmed) == len(good) and all(
+                    probe.get("arithmetic_precision") == "int8" and probe.get("runtime_execution_verified")
+                    for probe in confirmed) else "unverified",
+                "accumulator_precision": "unverified",
+                "runtime_execution_verified": len(confirmed) == len(good) and all(
+                    probe.get("runtime_execution_verified", False) for probe in confirmed),
                 "reason": "; ".join(sorted({probe.get("reason", "Precision probe missing in a repeat.")
                                             for probe in gpu_probes if not probe.get("available")})),
             }

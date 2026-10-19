@@ -309,7 +309,10 @@ def cmd_setup_winml(args: argparse.Namespace) -> int:
     if result.returncode:
         return result.returncode
     command = [str(python), "-m", "fairbench.windowsml", "--setup"]
-    if args.provider:
+    if getattr(args, "tensorrt", False):
+        from .windowsml import TENSORRT_RTX_PROVIDER
+        command += ["--provider", TENSORRT_RTX_PROVIDER]
+    elif args.provider:
         command += ["--provider", args.provider]
     if args.require_npu:
         command += ["--require-npu"]
@@ -391,7 +394,7 @@ def cmd_setup_gpu(args: argparse.Namespace) -> int:
     import venv as venv_mod
 
     root = paths.work_root()
-    name = args.name or (".venv-cuda" if args.cuda else ".venv-gpu")
+    name = args.name or (".venv-tensorrt" if args.tensorrt else ".venv-cuda" if args.cuda else ".venv-gpu")
     target = Path(name) if Path(name).is_absolute() else root / name
     python = target / ("Scripts/python.exe" if sys.platform.startswith("win") else "bin/python")
 
@@ -411,7 +414,9 @@ def cmd_setup_gpu(args: argparse.Namespace) -> int:
         venv_mod.EnvBuilder(with_pip=True, clear=args.force).create(str(target))
 
     packages = ["numpy", "onnx"]
-    if args.cuda:
+    if args.tensorrt:
+        packages += ["tensorrt-cu12==10.13.3.9", "cuda-python>=12,<13", "onnxruntime"]
+    elif args.cuda:
         packages += ["onnxruntime-gpu", "nvidia-cublas-cu12", "nvidia-cudnn-cu12"]
     else:
         packages += ["onnxruntime-directml"]
@@ -433,6 +438,8 @@ def cmd_setup_gpu(args: argparse.Namespace) -> int:
     for info in interp.probe_all(refresh=True):
         mark = c("ok  ", GREEN) if info.available else c("fail", RED)
         provs = ", ".join(p for p in info.providers if p != "AzureExecutionProvider") or (info.error or "-")
+        if info.tensorrt_devices:
+            provs += f", TensorRT {info.tensorrt_version}"
         print(f"  [{mark}] {info.path}")
         print(f"         onnxruntime {info.onnxruntime or '-'}  providers: {provs}")
         if not info.primary and info.available and info.providers:
@@ -579,7 +586,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ver.set_defaults(func=cmd_verify)
 
     p_run = sub.add_parser("run", help="run the benchmark suite")
-    p_run.add_argument("--backend", choices=["all", "ort", "openvino", "winml"], default="all", help="runtime to benchmark (default: all available)")
+    p_run.add_argument("--backend", choices=["all", "ort", "openvino", "winml", "tensorrt"], default="all", help="runtime to benchmark (default: all available)")
     p_run.add_argument("--suite", choices=list(WORKLOAD_SETS), default="standard", help="measurement workload set; --workloads overrides it")
     p_run.add_argument("--mode", choices=["latency", "throughput", "peak"], default=None)
     p_run.add_argument("--requests", type=int, choices=range(33), default=0, metavar="0..32", help="throughput concurrency; 0 sweeps 1/2/4/8 (NPU also 16/32)")
@@ -618,12 +625,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_gpu = sub.add_parser("setup-gpu", help="create an isolated environment with a GPU-capable ONNX Runtime")
     p_gpu.add_argument("--name", default=None, help="virtual environment directory (default .venv-gpu / .venv-cuda)")
-    p_gpu.add_argument("--cuda", action="store_true", help="install onnxruntime-gpu + CUDA runtime instead of DirectML")
+    gpu_runtime = p_gpu.add_mutually_exclusive_group()
+    gpu_runtime.add_argument("--cuda", action="store_true", help="install onnxruntime-gpu + CUDA runtime instead of DirectML")
+    gpu_runtime.add_argument("--tensorrt", action="store_true", help="install native TensorRT 10 + CUDA 12 for verified INT8 GEMM (isolated .venv-tensorrt)")
     p_gpu.add_argument("--force", action="store_true", help="rebuild an existing environment")
     p_gpu.set_defaults(func=cmd_setup_gpu)
 
     p_winml = sub.add_parser("setup-winml", help="prepare Windows ML and download compatible certified EPs")
-    p_winml.add_argument("--provider", help="download only this execution provider (e.g. VitisAIExecutionProvider)")
+    winml_provider = p_winml.add_mutually_exclusive_group()
+    winml_provider.add_argument("--provider", help="download only this execution provider (e.g. VitisAIExecutionProvider)")
+    winml_provider.add_argument("--tensorrt", action="store_true", help="prepare the Windows ML TensorRT-RTX provider for NVIDIA GPUs")
     p_winml.add_argument("--require-npu", action="store_true", help="fail if the requested NPU is not exposed")
     p_winml.set_defaults(func=cmd_setup_winml)
 

@@ -8,8 +8,10 @@ import json
 import os
 import shutil
 import tempfile
-from pathlib import Path
 from importlib.metadata import version
+from pathlib import Path
+
+TENSORRT_RTX_PROVIDER = "NvTensorRTRTXExecutionProvider"
 
 _registered: set[str] = set()
 _dll_directories: dict[str, object] = {}
@@ -62,7 +64,7 @@ def register(*, download: bool = False, provider_name: str | None = None) -> lis
     notes = []
     with EpCatalog() as catalog:
         for provider in catalog.find_all_providers():
-            if provider_name and provider.name != provider_name:
+            if provider_name and provider.name.casefold() != provider_name.casefold():
                 continue
             if provider.certification != EpCertification.Certified:
                 continue
@@ -104,12 +106,12 @@ def main() -> int:
     for note in data["winml_notes"]:
         print(f"  {note}")
     matches = [device for device in data["winml_devices"]
-               if (not args.provider or device["provider"] == args.provider)
+               if (not args.provider or device["provider"].casefold() == args.provider.casefold())
                and (device["kind"] == "npu" if args.require_npu else device["kind"] in ("gpu", "npu"))]
     if not matches:
         print(f"Required device not found: {args.provider or 'Windows ML'} {'NPU' if args.require_npu else 'GPU/NPU'}. "
-              "Check the AMD NPU driver and Windows Update; the EP catalog must support this hardware. "
-              "https://ryzenai.docs.amd.com/projects/WinML/en/latest/installation.html")
+              "Check the device driver and Windows Update; the EP catalog must support this hardware. "
+              "https://learn.microsoft.com/windows/ai/new-windows-ml/supported-execution-providers")
         return 1
     return 0
 

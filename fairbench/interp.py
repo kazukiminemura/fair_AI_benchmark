@@ -51,11 +51,16 @@ PROBE_SOURCE = (
     "  p.update(probe())\n"
     "except Exception as e:\n"
     " p['winml_notes']=[str(e)]\n"
+    "try:\n"
+    " from fairbench.backends.tensorrt_backend import probe_runtime\n"
+    " p.update(probe_runtime())\n"
+    "except Exception as e:\n"
+    " p['tensorrt_error']=str(e)\n"
     "sys.stdout.write(" + repr(MARKER) + "+json.dumps(p))\n"
 )
 
 # Names we look for automatically, in priority order.
-VENV_NAMES = (".venv-winml", ".venv-gpu", ".venv-dml", ".venv-cuda", ".venv-ryzenai", ".venv")
+VENV_NAMES = (".venv-winml", ".venv-gpu", ".venv-dml", ".venv-cuda", ".venv-tensorrt", ".venv-ryzenai", ".venv")
 
 
 @dataclass
@@ -73,6 +78,9 @@ class Interpreter:
     winml_devices: list[dict] = field(default_factory=list)
     winml_notes: list[str] = field(default_factory=list)
     winml_version: str = ""
+    tensorrt_version: str = ""
+    tensorrt_devices: list[dict] = field(default_factory=list)
+    tensorrt_error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -84,6 +92,8 @@ class Interpreter:
 def payload() -> dict[str, Any]:
     """What this interpreter has. Shared by the subprocess and the frozen path."""
     info: dict[str, Any] = {"python": sys.version.split()[0], "platform": sys.platform}
+    from .backends.tensorrt_backend import probe_runtime
+    info.update(probe_runtime())
     try:
         import onnxruntime as ort
 
@@ -201,8 +211,10 @@ def _signature(path: str) -> str:
     # Installing SDK packages leaves python.exe unchanged. Include Conda's
     # transaction history and ORT packages in both Windows and POSIX layouts.
     files = [python, prefix / "conda-meta" / "history",
-             prefix / "Lib" / "site-packages" / "onnxruntime" / "__init__.py"]
+             prefix / "Lib" / "site-packages" / "onnxruntime" / "__init__.py",
+             prefix / "Lib" / "site-packages" / "tensorrt" / "__init__.py"]
     files.extend(sorted(prefix.glob("lib/python*/site-packages/onnxruntime/__init__.py")))
+    files.extend(sorted(prefix.glob("lib/python*/site-packages/tensorrt/__init__.py")))
     signatures = []
     for file in files:
         try:
@@ -255,6 +267,9 @@ def probe(interpreter: str, timeout: float = 120.0) -> Interpreter:
         info.winml_devices = data.get("winml_devices", [])
         info.winml_notes = data.get("winml_notes", [])
         info.winml_version = data.get("winml_version", "")
+        info.tensorrt_version = data.get("tensorrt_version", "")
+        info.tensorrt_devices = data.get("tensorrt_devices", [])
+        info.tensorrt_error = data.get("tensorrt_error", "")
         return info
 
     if not Path(interpreter).exists():
@@ -289,6 +304,9 @@ def probe(interpreter: str, timeout: float = 120.0) -> Interpreter:
     info.winml_devices = data.get("winml_devices", [])
     info.winml_notes = data.get("winml_notes", [])
     info.winml_version = data.get("winml_version", "")
+    info.tensorrt_version = data.get("tensorrt_version", "")
+    info.tensorrt_devices = data.get("tensorrt_devices", [])
+    info.tensorrt_error = data.get("tensorrt_error", "")
     return info
 
 

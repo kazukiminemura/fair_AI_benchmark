@@ -25,6 +25,13 @@ def json_safe(value: Any) -> Any:
 
 
 def format_compute_rate(row: dict[str, Any]) -> str:
+    if row.get("measurement_validity", (row.get("session") or {}).get("measurement_validity")) == "model_only":
+        rate = row.get("model_operations_per_s")
+        if rate is None:
+            operations, units = row.get("flops"), row.get("units_per_s")
+            rate = operations * units if operations is not None and units is not None else None
+        return (f"{rate / 1e12:.3f} TOPS (model estimate; native INT8 unverified)"
+                if rate is not None and math.isfinite(rate) else "unavailable (model operation count missing)")
     value = row.get("flops_per_s")
     if value is None or not math.isfinite(value):
         return "—"
@@ -39,6 +46,8 @@ def default_name(prefix: str = "fairbench") -> str:
 
 
 def format_execution_precision(row: dict[str, Any]) -> str:
+    if row.get("phase") == "precision" or row.get("measurement_validity", (row.get("session") or {}).get("measurement_validity")) == "model_only":
+        return "unverified (model executed on GPU; native INT8 arithmetic unverified)"
     gpu = row.get("gpu_precision", (row.get("session") or {}).get("gpu_precision", {}))
     gpu_assigned = gpu.get("available") and gpu.get("tensor_precisions")
     values = gpu["tensor_precisions"] if gpu_assigned else row.get("compute_precisions", (row.get("session") or {}).get("compute_precisions", []))
@@ -48,6 +57,8 @@ def format_execution_precision(row: dict[str, Any]) -> str:
         return "unverified"
     text = "/".join(sorted({names.get(value.lower(), value.upper()) for value in values}))
     if gpu_assigned:
+        if gpu.get("arithmetic_precision") == "int8" and gpu.get("runtime_execution_verified"):
+            return "INT8 (TensorRT measured engine: INT8 GEMM operands/tactic and execution verified; accumulator unverified)"
         evidence = gpu.get("evidence", [])
         if isinstance(evidence, str):
             evidence = [evidence]
