@@ -1045,7 +1045,7 @@ function buildRunModal() {
     });
   });
   wWrap.innerHTML = '';
-  const defaults = cat.workload_sets?.standard?.workloads || ['dense_gemm', 'conv_vision', 'depthwise_mobile', 'transformer', 'llm_prefill', 'llm_decode'];
+  const defaults = cat.workload_sets?.standard?.workloads || ['precision_gemm_fp16', 'precision_gemm_int8'];
   (cat.workloads || []).forEach((w) => {
     if (w.key === 'dense_static' || (w.key.endsWith('_int8') && w.key !== 'dense_static_int8' && w.category !== 'precision')) return;
     const on = defaults.includes(w.key);
@@ -1073,7 +1073,9 @@ function openModal() {
 
 async function startRun() {
   const targets = [...$('targetChecks').querySelectorAll('input:not(:disabled):checked')].map((i) => i.value);
-  const workloads = [...$('workloadChecks').querySelectorAll('input:checked')].map((i) => i.value);
+  const workloads = ['standard', 'precision', 'peak'].includes($('optSuite').value)
+    ? ['precision_gemm_fp16', 'precision_gemm_int8']
+    : [...$('workloadChecks').querySelectorAll('input:checked')].map((i) => i.value);
   if (!targets.length) { toast('pick at least one device', true); return; }
   if (!workloads.length) { toast('pick at least one workload', true); return; }
   const body = {
