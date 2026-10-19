@@ -373,6 +373,9 @@ def discover(fingerprint: system.SystemFingerprint | None = None, include_openvi
     d = Discovery()
 
     ort_targets, ort_version, ort_notes = _ort_targets(fp)
+    if fp.cpu.vendor == "amd":
+        ort_targets = [target for target in ort_targets if target.device != "OpenVINOExecutionProvider"]
+        ort_notes = [note for note in ort_notes if "OpenVINOExecutionProvider" not in note]
     d.targets += ort_targets
     d.notes += ort_notes
     if ort_version:
@@ -388,7 +391,7 @@ def discover(fingerprint: system.SystemFingerprint | None = None, include_openvi
     except Exception:
         d.interpreters = []
 
-    if include_openvino:
+    if include_openvino and fp.cpu.vendor != "amd":
         ov_targets, ov_version, ov_notes = _openvino_targets(fp)
         d.targets += ov_targets
         d.notes += ov_notes
