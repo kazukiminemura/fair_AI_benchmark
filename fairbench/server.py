@@ -181,6 +181,13 @@ def _run_thread(options: dict[str, Any]) -> None:
 class Handler(BaseHTTPRequestHandler):
     server_version = f"fairbench/{__version__}"
 
+    def handle(self) -> None:
+        try:
+            super().handle()
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            # The client disconnected; this request no longer has a recipient.
+            self.close_connection = True
+
     def log_message(self, fmt: str, *args: Any) -> None:  # quieter console
         if "/api/" in (self.path or ""):
             return
