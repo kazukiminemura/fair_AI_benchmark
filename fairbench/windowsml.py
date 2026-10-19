@@ -5,9 +5,40 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import shutil
+import tempfile
+from pathlib import Path
 from importlib.metadata import version
 
 _registered: set[str] = set()
+_dll_directories: dict[str, object] = {}
+
+
+def local_provider_library(library_path: str) -> Path:
+    """Keep the complete provider payload together outside the Store package."""
+    library = Path(library_path).resolve(strict=True)
+    source = library.parent
+    files = sorted(path for path in source.rglob('*') if path.is_file())
+    identity = [(str(path.relative_to(source)), path.stat().st_size, path.stat().st_mtime_ns) for path in files]
+    digest = hashlib.sha256((str(source) + json.dumps(identity)).encode()).hexdigest()[:20]
+    root = Path('.cache/windowsml').resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    destination = root / digest
+    if not destination.exists():
+        with tempfile.TemporaryDirectory(dir=root) as temporary:
+            staging = Path(temporary) / 'provider'
+            shutil.copytree(source, staging)
+            try:
+                staging.rename(destination)
+            except FileExistsError:
+                pass  # Another worker finished copying the identical package.
+    if hasattr(os, 'add_dll_directory'):
+        for directory in {destination, *(path.parent for path in destination.rglob('*.dll'))}:
+            key = str(directory)
+            if key not in _dll_directories:
+                _dll_directories[key] = os.add_dll_directory(key)
+    return destination / library.name
 
 
 def device_info(device) -> dict:
@@ -41,7 +72,9 @@ def register(*, download: bool = False, provider_name: str | None = None) -> lis
                     continue
                 provider.ensure_ready()
                 if provider.name not in _registered:
-                    ort.register_execution_provider_library(provider.name, provider.library_path)
+                    library = (str(local_provider_library(provider.library_path))
+                               if provider.name == 'VitisAIExecutionProvider' else provider.library_path)
+                    ort.register_execution_provider_library(provider.name, library)
                     _registered.add(provider.name)
             except Exception as exc:
                 notes.append(f"{provider.name}: {exc}")

@@ -48,7 +48,13 @@ def main() -> None:
                 backend = OrtBackend()
                 compiled = backend.compile(built, cpu, RunConfig(), "int8")
                 backend.diagnose(compiled, built, cpu, RunConfig(), inputs)
-                assert "MatMulIntegerToFloat" in compiled.meta["compute_kernels"], compiled.meta
+                assert set(compiled.meta["compute_kernels"]) & {"MatMulIntegerToFloat", "QLinearMatMul"}, compiled.meta
+                inits = {value.name: onnx.numpy_helper.to_array(value) for value in built.model.graph.initializer}
+                for name in ("input_zero", "weight_zero", "output_zero"):
+                    assert inits[name].dtype == np.int8 and inits[name].item() == 0
+                assert inits['weight_scale'].ndim == 0
+                assert built.model.graph.node[-1].op_type == 'DequantizeLinear'
+                assert built.model.graph.node[-2].op_type == 'QuantizeLinear'
 
     backend = OrtBackend()
     amd_npu = Target("amd-npu", "ort", "VitisAIExecutionProvider", "npu", "amd", "AMD NPU")
