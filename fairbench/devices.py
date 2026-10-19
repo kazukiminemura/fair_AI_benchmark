@@ -186,9 +186,10 @@ def _ort_targets(fp: system.SystemFingerprint) -> tuple[list[Target], str, list[
                 targets.append(Target(
                     id=f"winml:{device['provider']}:{kind}:{device['key']}",
                     backend="winml", device=device["provider"], kind=kind, vendor=vendor,
-                    label=f"Windows ML {device['provider'].removesuffix('ExecutionProvider')}"
+                    label=f"Windows ML {'TensorRT-RTX' if device['provider'].casefold() == 'nvtensorrtrtxexecutionprovider' else device['provider'].removesuffix('ExecutionProvider')}"
                           + ("" if device["provider"] == "CPUExecutionProvider" else f" {kind.upper()}"),
                     detail=device["description"], runtime_version=info.onnxruntime or "?",
+                    precisions=["fp32", "fp16"] if device['provider'].casefold() == 'nvtensorrtrtxexecutionprovider' else ["fp32"],
                     python="" if info.primary else info.path,
                     options={"winml_key": device["key"], "windowsml_version": info.winml_version},
                 ))
@@ -388,6 +389,18 @@ def discover(fingerprint: system.SystemFingerprint | None = None, include_openvi
         for info in d.interpreters:
             if info.get("winml_version"):
                 d.runtimes["windowsml"] = info["winml_version"]
+            if info.get("tensorrt_error"):
+                d.notes.append(f"TensorRT ({info['path']}): {info['tensorrt_error']}")
+            for device in info.get("tensorrt_devices", []):
+                index = device["device_id"]
+                if any(t.id == f"tensorrt:gpu:{index}" for t in d.targets):
+                    continue
+                d.runtimes["tensorrt"] = info["tensorrt_version"]
+                d.targets.append(Target(
+                    id=f"tensorrt:gpu:{index}", backend="tensorrt", device="TensorRT", kind="gpu", vendor="nvidia",
+                    label="TensorRT GPU", detail=device["name"], precisions=["fp32", "fp16", "int8"],
+                    runtime_version=info["tensorrt_version"], python="" if info["primary"] else info["path"],
+                    options={"device_id": index, "compute_capability": device["compute_capability"]}))
     except Exception:
         d.interpreters = []
 

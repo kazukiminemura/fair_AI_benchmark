@@ -12,8 +12,63 @@ const context = vm.createContext({ document: {
 } });
 const source = fs.readFileSync(require.resolve('../fairbench/web/app.js'), 'utf8');
 vm.runInContext(source.split('/* ------------------------------------------------------------------ wire */')[0], context);
+const chartHosts = Object.fromEntries(['throughputChart', 'chartLegend']
+  .map((id) => [id, { children: [], appendChild(child) { this.children.push(child); } }]));
+context.document.getElementById = (id) => chartHosts[id];
+context.document.createElementNS = (_, tag) => ({ ...context.document.createElement(tag), style: {} });
+context.requestAnimationFrame = (handler) => handler();
+context.renderThroughput({ results: [
+  { ok: true, workload: 'fp16', target_id: 'gpu1', units_per_s: 56.53 },
+  { ok: true, workload: 'fp16', target_id: 'gpu2', units_per_s: 30.15 },
+  { ok: true, workload: 'int8', target_id: 'gpu1', units_per_s: 31.76 },
+  { ok: true, workload: 'equal', target_id: 'gpu1', units_per_s: 30.15 },
+  { ok: true, workload: 'tokens', target_id: 'gpu1', units_per_s: 10000, unit: 'token' },
+  { ok: true, workload: 'invalid', target_id: 'gpu1', units_per_s: Infinity },
+] });
+const scaledBars = chartHosts.throughputChart.children[0].children.filter((node) => node.tag === 'rect');
+const barWidths = scaledBars.map((node) => Number(node.attributes.width));
+assert.equal(barWidths.length, 5);
+assert(Math.abs(barWidths[2] / barWidths[0] - 31.76 / 56.53) < 1e-12);
+assert.equal(barWidths[1], barWidths[3]);
+assert.equal(barWidths[4], barWidths[0]); // Different units have independent scales.
+assert(scaledBars[2].children.some((node) => node.tag === 'title' && node.textContent.includes('31.76 sample/s')));
+console.log('Throughput scale passed: shared sample/s scale, equal values, separate units, finite values and hover labels.');
+assert.equal(context.formatExecutionPrecision({ phase: 'precision', precision: 'int8' }),
+  'INT8指定 · デバイス実行済み');
+const unverifiedCard = { children: [], appendChild(child) { this.children.push(child); } };
+context.renderPrecisionRates(unverifiedCard, [{ kind: 'gpu', precision: 'int8', ok: false, phase: 'precision' }], 'gpu');
+assert(unverifiedCard.children.some((child) => child.textContent === '再計測が必要'));
+const referenceRow = { kind: 'gpu', precision: 'int8', ok: true, unit: 'sample', units_per_s: 20,
+  flops: 1e11, flops_per_s: null, latency_ms: 50, measurement_validity: 'model_only', target_label: 'Windows ML TensorRT-RTX GPU',
+  timing_breakdown: { available: true, compute_ms: 25, e2e_ms: 50 } };
+const referenceCard = { children: [], appendChild(child) { this.children.push(child); } };
+context.renderPrecisionRates(referenceCard, [referenceRow], 'gpu');
+const referenceValue = referenceCard.children.find((child) => child.textContent === '4.000');
+assert(referenceValue.children.some((child) => child.textContent === 'TOPS'));
+assert(referenceValue.children.some((child) => child.textContent === '（E2E 2.000 TOPS）'));
+assert.equal(context.formatComputeRate(referenceRow), '2.000 TOPS');
+assert.equal(context.formatInferenceRate({ ...referenceRow,
+  timing_breakdown: { available: true, compute_ms: 1 } }), '100.000 TOPS');
+assert.equal(context.formatComputeRate({ ...referenceRow, model_operations_per_s: 3e12 }), '3.000 TOPS');
+assert.equal(context.formatComputeRate({ precision: 'int8', flops: 137438953472, units_per_s: 61.87970122051206,
+  session: { measurement_validity: 'model_only' } }), '8.505 TOPS');
+assert.equal(context.inferenceRateValue(referenceRow), 4e12);
+const referenceDetails = { children: [], appendChild(child) { this.children.push(child); } };
+context.renderPrecisionRates(referenceDetails, [referenceRow], 'gpu', { details: true });
+assert(referenceDetails.children.some((child) => child.textContent.includes('INT8指定')));
+assert(!referenceDetails.children.some((child) => /内部INT8|モデル演算数×実測処理回数|遅延 50/.test(child.textContent)));
+assert(!context.formatComputeRate({ precision: 'int8', flops_per_s: 1e12,
+  session: { measurement_validity: 'model_only' } }).includes('TOPS'));
 const gpuPaths = ['ort:DmlExecutionProvider', 'openvino:GPU',
   'winml:DmlExecutionProvider:gpu:device1', 'winml:OpenVINOExecutionProvider:gpu:device2'];
+assert.equal(context.formatExecutionPrecision({ gpu_precision: {
+  available: true, tensor_precisions: ['int8'], evidence: ['tensorrt_engine_inspector'],
+  arithmetic_precision: 'int8', runtime_execution_verified: true,
+} }), '入力型 INT8');
+assert(!context.formatExecutionPrecision({ gpu_precision: {
+  available: true, tensor_precisions: ['int8'], evidence: ['tensorrt_engine_inspector'],
+  arithmetic_precision: 'unverified', runtime_execution_verified: false,
+} }).includes('実行を確認'));
 assert.equal(new Set(gpuPaths.map((target_id) => context.deviceColor({ kind: 'gpu', target_id }))).size, 4);
 const inferenceWinner = { kind: 'gpu', precision: 'int8', ok: true, flops: 1e9,
   flops_per_s: 1e12, timing_breakdown: { available: true, compute_ms: 0.1 } };
@@ -116,50 +171,44 @@ for (const filename of (fs.existsSync(reportDirectory) ? fs.readdirSync(reportDi
   }
 }
 console.log('Precision display passed: FP16 TFLOPS and INT8 TOPS on every device; FP32 excluded.');
-assert.equal(context.formatExecutionPrecision({ compute_precisions: ['f32'] }), 'FP32（ランタイム報告）');
-assert.equal(context.formatExecutionPrecision({ precision: 'fp16' }), '未確認');
+assert.equal(context.formatExecutionPrecision({ compute_precisions: ['f32'] }), '入力型 FP32');
+assert.equal(context.formatExecutionPrecision({ precision: 'fp16' }), 'FP16指定');
 assert.equal(context.formatExecutionPrecision({ gpu_precision: {
   available: true, tensor_precisions: ['float16'], evidence: 'profiled_fused_graph',
-} }), 'FP16（最適化前ONNXの演算入力型（GPU実行を別途確認）・内部演算/蓄積は未確認）');
+} }), '入力型 FP16');
 assert.equal(context.formatExecutionPrecision({ gpu_precision: {
   available: true, tensor_precisions: ['float16'], evidence: ['profiled_compute_inputs'],
-} }), 'FP16（GPUプロファイルの演算入力型・内部演算/蓄積は未確認）');
+} }), '入力型 FP16');
 assert.equal(context.formatExecutionPrecision({ gpu_precision: {
   available: false, tensor_precisions: ['int8'],
-} }), '未確認');
+} }), '記録なし');
 const probedCard = { children: [], appendChild(child) { this.children.push(child); } };
 context.renderPrecisionRates(probedCard, [{ kind: 'gpu', precision: 'fp16', ok: true, flops_per_s: 2e12,
   gpu_precision: { available: true, tensor_precisions: ['float16'], evidence: 'profiled_fused_graph' },
 }], 'gpu', { details: true });
-assert(probedCard.children.some((child) => child.textContent.includes('演算入力 FP16（最適化前ONNX')));
+assert(probedCard.children.some((child) => child.textContent.includes('指定精度 FP16')));
 assert(!probedCard.children.some((child) => child.textContent.includes('実行 FP16')));
 assert(probedCard.children.some((child) => child.textContent.includes('参考値：要素単位の正解検証がありません')));
 const fallbackCard = { children: [], appendChild(child) { this.children.push(child); } };
 context.renderPrecisionRates(fallbackCard, [{ kind: 'cpu', precision: 'fp16', ok: true, flops_per_s: 1e12,
   compute_precisions: ['f32'], correctness_verified: true,
 }], 'cpu', { details: true });
-assert(fallbackCard.children.some((child) => child.textContent.includes('ネイティブFP16演算性能ではありません')));
+assert(fallbackCard.children.some((child) => child.textContent.includes('指定精度 FP16')));
 assert(!fallbackCard.children.some((child) => child.textContent.includes('参考値：')));
-assert(context.precisionRateNote({ compute_precisions: ['f32'],
-  gpu_precision: { available: true, tensor_precisions: ['float16'], evidence: 'profiled_fused_graph' } }, 'fp16')
-  .includes('ネイティブFP16演算性能ではありません'));
 for (const evidence of ['profiled_fused_graph', 'profiled_compute_inputs', undefined]) {
   const int8Row = { kind: 'gpu', precision: 'int8', ok: true, flops_per_s: 2e12, correctness_verified: true,
     compute_precisions: ['int8'], gpu_precision: { available: true, tensor_precisions: ['float'], evidence } };
   const int8Card = { children: [], appendChild(child) { this.children.push(child); } };
   context.renderPrecisionRates(int8Card, [int8Row], 'gpu', { details: true });
-  assert(int8Card.children.some((child) => child.textContent.includes('ネイティブINT8演算性能ではありません')));
-  assert(int8Card.children.some((child) => child.textContent.includes('TOPS換算値')));
-  assert(int8Card.children.some((child) => child.textContent.includes('FP32')));
+  assert(int8Card.children.some((child) => child.textContent.includes('指定精度 INT8')));
+  assert(!int8Card.children.some((child) => /内部INT8|内部演算\/蓄積|ネイティブINT8|FP32/.test(child.textContent)));
   assert(!int8Card.children.some((child) => child.textContent.includes('GPU割当グラフ型')));
   assert.equal(context.formatComputeRate(int8Row), '2.000 TOPS');
   const summaryCard = { children: [], appendChild(child) { this.children.push(child); } };
   context.renderPrecisionRates(summaryCard, [int8Row], 'gpu');
-  assert(summaryCard.children[3].attributes.title.includes('ネイティブINT8演算性能ではありません'));
+  assert(!summaryCard.children[3].attributes.title);
 }
-assert(context.precisionRateNote({ compute_precisions: ['f32'] }, 'int8').includes('ネイティブINT8'));
-assert.equal(context.precisionRateNote({ compute_precisions: ['int8', 'uint8'] }, 'int8'), '');
-assert.equal(context.formatExecutionPrecision({ compute_precisions: ['i8', 'f32'], compute_precision_complete: false }), 'FP32/INT8（一部未確認）');
+assert.equal(context.formatExecutionPrecision({ compute_precisions: ['i8', 'f32'], compute_precision_complete: false }), '入力型 FP32/INT8');
 const timedCard = { children: [], appendChild(child) { this.children.push(child); } };
 context.renderPrecisionRates(timedCard, [{ kind: 'gpu', precision: 'fp16', ok: true, flops_per_s: 2e12,
   timing_breakdown: { available: true, h2d_ms: 1, compute_ms: 2, d2h_ms: 3, repeats_measured: 3 } }], 'gpu', { details: true });
@@ -252,6 +301,31 @@ assert(heroHosts.heroStats.children[0].innerHTML.includes('組み合わせ'));
 assert(heroHosts.heroStats.children[0].innerHTML.includes('>2<'));
 assert(source.includes('${r.targets || 0} 組み合わせ'));
 console.log('Disclosure checks passed: INT8 conversion/source labels, stored grade pairs, combination labels and legacy/default views.');
+// A newly installed WinML provider must appear without keeping the old modal.
+function modalNode() {
+  return { children: [], dataset: {}, value: '', hidden: false,
+    set innerHTML(value) { this.children = []; },
+    get childElementCount() { return this.children.length; },
+    appendChild(child) { this.children.push(child); }, setAttribute() {},
+    querySelector() { return { addEventListener() {} }; }, querySelectorAll() { return []; } };
+}
+const modalControls = Object.fromEntries(['targetChecks', 'workloadChecks', 'optBackend', 'optSuite', 'optMode',
+  'modeField', 'requestsField', 'optGemmSize'].map((id) => [id, modalNode()]));
+const modalContext = vm.createContext({ document: {
+  createElement: modalNode, getElementById: (id) => modalControls[id],
+} });
+vm.runInContext(source.split('/* ------------------------------------------------------------------ wire */')[0], modalContext);
+vm.runInContext("state.catalog = {discovery: {targets: [{id:'cpu',label:'CPU',backend:'ort'}]},workloads:[]}", modalContext);
+modalContext.buildRunModal();
+assert.equal(modalControls.targetChecks.childElementCount, 1);
+const firstHandler = modalControls.optBackend.onchange;
+modalContext.buildRunModal();
+assert.equal(modalControls.optBackend.onchange, firstHandler);
+vm.runInContext("state.catalog.discovery.targets.push({id:'winml:rtx',label:'TensorRT-RTX',backend:'winml'})", modalContext);
+modalContext.buildRunModal();
+assert.equal(modalControls.targetChecks.childElementCount, 2);
+assert(modalControls.optBackend.children.some((child) => child.textContent === 'Windows ML'));
+console.log('WinML modal discovery passed: rebuild on device changes, preserve unchanged modal, replace handlers.');
 const controls = Object.fromEntries(['optSuite', 'optMode', 'workloadChecks', 'modeField', 'requestsField', 'optGemmSize',
   'optRequests', 'optRepeats', 'optThreads', 'optBackend', 'optPower', 'optBattery', 'targetChecks']
   .map((id) => [id, { value: '', checked: false }]));
