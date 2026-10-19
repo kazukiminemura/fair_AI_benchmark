@@ -8,12 +8,40 @@ from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 
 from fairbench import report, server, worker, worker_process
 from fairbench.stats import median, summarise, summarise_repeats
+
+
+def check_client_disconnects() -> None:
+    for handler_type in (server.Handler, server.MobileHandler):
+        for error_type in (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            for failure_point in ("end_headers", "write"):
+                handler = object.__new__(handler_type)
+                handler.send_response = Mock()
+                handler.send_header = Mock()
+                handler.end_headers = Mock()
+                handler.wfile = Mock()
+                failing = handler.end_headers if failure_point == "end_headers" else handler.wfile.write
+                failing.side_effect = error_type(10053, "client disconnected")
+                for respond in (lambda handler=handler: handler._json({"ok": True}),
+                                lambda handler=handler: handler._html("ok"),
+                                lambda handler=handler: handler._file(server.WEB_ROOT / "index.html")):
+                    handler.handle_one_request = respond
+                    handler.handle()
+                    assert handler.close_connection
+                    assert failing.called
+        handler.handle_one_request = Mock(side_effect=OSError("unrelated server failure"))
+        try:
+            handler.handle()
+        except OSError as exc:
+            assert str(exc) == "unrelated server failure"
+        else:
+            raise AssertionError("Unrelated server error was hidden")
+    print("Client disconnect checks passed: aborted/reset/broken connections, headers and JSON/HTML/files; unrelated errors propagate.")
 
 
 def check_delete_inputs() -> None:
@@ -138,6 +166,7 @@ def main() -> None:
     state.push({"event": "done", "report": completed})
     assert state.snapshot()["report"] == completed
     assert not state.snapshot()["events"]  # Do not duplicate the report in the event log.
+    check_client_disconnects()
     check_delete_inputs()
     check_numpy_json()
     check_nullable_median()
