@@ -93,6 +93,10 @@ FP16モデルがCPUでFP32実行される場合や、INT8モデルでもネイ�
 
 ## GPU・NPUとスマートフォン
 
+AMD NPUはAMDアカウントを使わずWindows MLのEP Catalogから準備できます。AMD機上で`uv run fairbench setup-npu`を実行し、続けて`uv run python -m scripts.validate_amd_npu`で4096×4096のFP16・INT8を検証します。CPUフォールバック禁止と正解照合を維持し、成功・失敗とも測定結果を`results/`へ保存します。両精度の成功時だけ終了コード0を返します。
+
+Vitis AIのプロバイダーはDLLと同じディレクトリのファイル一式（サブディレクトリを含む）を`.cache/windowsml/`へコピーして登録します。INT8 GEMMは符号付き対称・テンソル単位の量子化と出力QDQを使用します。旧INT8モデルとはグラフが異なるため、比較には再計測が必要です。FP16モデルのNPU対応は実機ランタイムに依存し、未対応時に別精度やCPUへ切り替えて成功扱いにはしません。
+
 Windows x64ではDirectMLとOpenVINOを導入します。GPU・NPUには対応ハードウェアとメーカー製ドライバーが必要です。
 搭載されていないNPUや非対応の精度は測定できません。
 

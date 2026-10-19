@@ -413,7 +413,8 @@ def check_worker_failures() -> None:
                 if payload.get("ok"):
                     assert result["ok"]
                 else:
-                    assert result["error"] == payload.get("error", "worker exited with code 1\ndriver error")
+                    assert result["error"].startswith(payload.get("error", "worker exited with code 1\ndriver error"))
+                    assert Path(result['worker_log']).is_file()
 
     with patch.object(worker_process.paths, "FROZEN", True), patch.object(
         worker_process.paths, "is_own_interpreter", return_value=True

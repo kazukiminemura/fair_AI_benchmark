@@ -614,20 +614,24 @@ def build_precision_gemm(precision: str = "fp32", size: int = 0) -> BuiltModel:
         ])
     elif precision == "int8":
         input_scale = np.float32(1 / 32)
-        weight_scale = np.maximum(np.max(np.abs(weight), axis=0) / 127, np.finfo(np.float32).tiny)
+        weight_scale = np.float32(max(np.max(np.abs(weight)) / 127, np.finfo(np.float32).tiny))
         quantized = np.clip(np.rint(weight / weight_scale), -127, 127).astype(np.int8)
         initializers.extend([
             numpy_helper.from_array(quantized, "weight"),
-            numpy_helper.from_array(np.array(128, dtype=np.uint8), "input_zero"),
-            numpy_helper.from_array(np.zeros(columns, dtype=np.int8), "weight_zero"),
+            numpy_helper.from_array(np.array(0, dtype=np.int8), "input_zero"),
+            numpy_helper.from_array(np.array(0, dtype=np.int8), "weight_zero"),
             numpy_helper.from_array(np.array(input_scale), "input_scale"),
             numpy_helper.from_array(weight_scale, "weight_scale"),
+            numpy_helper.from_array(np.array(1 / 16, dtype=np.float32), "output_scale"),
+            numpy_helper.from_array(np.array(0, dtype=np.int8), "output_zero"),
         ])
         nodes.extend([
             helper.make_node("QuantizeLinear", ["x", "input_scale", "input_zero"], ["input_quantized"]),
             helper.make_node("DequantizeLinear", ["input_quantized", "input_scale", "input_zero"], ["input_float"]),
-            helper.make_node("DequantizeLinear", ["weight", "weight_scale", "weight_zero"], ["weight_float"], axis=1),
-            helper.make_node("MatMul", ["input_float", "weight_float"], ["y"], name="precision_matmul"),
+            helper.make_node("DequantizeLinear", ["weight", "weight_scale", "weight_zero"], ["weight_float"]),
+            helper.make_node("MatMul", ["input_float", "weight_float"], ["output_float"], name="precision_matmul"),
+            helper.make_node("QuantizeLinear", ["output_float", "output_scale", "output_zero"], ["output_quantized"]),
+            helper.make_node("DequantizeLinear", ["output_quantized", "output_scale", "output_zero"], ["y"]),
         ])
     else:
         raise ValueError(f"unsupported GEMM precision: {precision}")
@@ -635,7 +639,7 @@ def build_precision_gemm(precision: str = "fp32", size: int = 0) -> BuiltModel:
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", opset)])
     model.ir_version = 10 if opset >= 21 else 8
     onnx.checker.check_model(model, full_check=True)
-    description = "static QDQ, UINT8 activations / INT8 weights" if precision == "int8" else f"{precision.upper()} inputs and weights"
+    description = "static symmetric INT8 QDQ inputs, weights and output (per-tensor scales)" if precision == "int8" else f"{precision.upper()} inputs and weights"
     return BuiltModel(key, f"{rows}x{inner}x{columns} GEMM, {description}", model,
                       2 * rows * inner * columns, "sample", precision, (rows, inner, columns))
 
