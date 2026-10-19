@@ -55,6 +55,18 @@ function formatInferenceRate(row) {
     || !Number.isFinite(row.flops) || row.flops <= 0) return '分離不可';
   return formatComputeRate({ ...row, flops_per_s: row.flops / (timing.compute_ms / 1000) });
 }
+function inferenceRateValue(row) {
+  if (row.measurement_scope === 'device_resident' || ['throughput', 'peak'].includes(row.measurement_mode)) {
+    return Number.isFinite(row.flops_per_s) ? row.flops_per_s : -Infinity;
+  }
+  const timing = row.timing_breakdown;
+  return timing?.available && Number.isFinite(timing.compute_ms) && timing.compute_ms > 0
+    && Number.isFinite(row.flops) && row.flops > 0 ? row.flops / (timing.compute_ms / 1000) : -Infinity;
+}
+function compareInferenceRates(first, second) {
+  const a = inferenceRateValue(first), b = inferenceRateValue(second);
+  return a === b ? second.flops_per_s - first.flops_per_s : a > b ? -1 : 1;
+}
 function formatE2ERate(row) {
   const timing = row.timing_breakdown;
   if (timing?.available && Number.isFinite(timing.e2e_ms) && timing.e2e_ms > 0
@@ -88,7 +100,7 @@ function renderPrecisionRates(card, rows, kind, { details = false } = {}) {
     const matching = rows.filter((row) => row.kind === kind && row.precision?.toLowerCase() === precision);
     const best = matching.filter((row) => row.ok
       && Number.isFinite(row.flops_per_s) && row.flops_per_s >= 0)
-      .sort((first, second) => second.flops_per_s - first.flops_per_s)[0];
+      .sort(compareInferenceRates)[0];
     card.appendChild(el('p', { class: 'device-role' }, details ? `${precision.toUpperCase()}モデル · ${unit}換算` : precision.toUpperCase()));
     const failed = matching.find((row) => !row.ok);
     const failureReason = failed && /Native .*GEMM|NOT_IMPLEMENTED|could not load/.test(failed.error || '')
@@ -172,7 +184,7 @@ function renderMeasurementDiagram(host, rows, kind = 'gpu', precision = 'fp16') 
   const name = kind.toUpperCase();
   const row = rows.filter((row) => row.ok && row.kind === kind
     && row.precision?.toLowerCase() === precision && Number.isFinite(row.flops_per_s))
-    .sort((first, second) => second.flops_per_s - first.flops_per_s)[0];
+    .sort(compareInferenceRates)[0];
   const timing = row?.timing_breakdown;
   const hostBuffers = timing?.transfer_scope === 'host_buffers';
   const shape = gemmShape(row);
@@ -289,6 +301,20 @@ function toggles(sel, on) { document.querySelectorAll(sel).forEach((n) => n.clas
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
 function deviceColor(row) {
+  if (row.kind === 'gpu') {
+    const id = row.target_id || row.id || '';
+    const backend = row.backend || id.split(':')[0];
+    const provider = row.device || id.split(':')[1];
+    const colors = {
+      'openvino': '#16a34a',
+      'ort:DmlExecutionProvider': '#14532d',
+      'winml:DmlExecutionProvider': '#4ade80',
+      'winml:OpenVINOExecutionProvider': '#86efac',
+      'ort:CUDAExecutionProvider': '#15803d',
+      'ort:ROCMExecutionProvider': '#22c55e',
+    };
+    return colors[`${backend}:${provider}`] || colors[backend] || KIND_COLOR.gpu;
+  }
   return KIND_COLOR[row.kind] || '#94a3b8';
 }
 
@@ -1138,6 +1164,25 @@ async function startRun() {
 }
 
 /* ------------------------------------------------------------------ wire */
+async function copyLog() {
+  const text = [...$('liveLog').children].map((line) => [...line.children]
+    .map((part) => part.textContent).join(' ')).join('\n');
+  if (!text) { toast('コピーするログがありません'); return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('ログをコピーしました');
+  } catch (err) {
+    location.hash = 'activity';
+    renderRoute();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents($('liveLog'));
+    selection.removeAllRanges();
+    selection.addRange(range);
+    toast('コピーできませんでした。実行ログを開いてCtrl+Cでコピーしてください', true);
+  }
+}
+$('copyLogBtn').onclick = copyLog;
 $('newRunBtn').onclick = openModal;
 $('cancelRun').onclick = () => { $('runModal').hidden = true; };
 $('confirmRun').onclick = startRun;

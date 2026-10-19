@@ -12,6 +12,20 @@ const context = vm.createContext({ document: {
 } });
 const source = fs.readFileSync(require.resolve('../fairbench/web/app.js'), 'utf8');
 vm.runInContext(source.split('/* ------------------------------------------------------------------ wire */')[0], context);
+const gpuPaths = ['ort:DmlExecutionProvider', 'openvino:GPU',
+  'winml:DmlExecutionProvider:gpu:device1', 'winml:OpenVINOExecutionProvider:gpu:device2'];
+assert.equal(new Set(gpuPaths.map((target_id) => context.deviceColor({ kind: 'gpu', target_id }))).size, 4);
+const inferenceWinner = { kind: 'gpu', precision: 'int8', ok: true, flops: 1e9,
+  flops_per_s: 1e12, timing_breakdown: { available: true, compute_ms: 0.1 } };
+const transferWinner = { ...inferenceWinner, flops_per_s: 2e12,
+  timing_breakdown: { available: true, compute_ms: 1 } };
+assert(context.compareInferenceRates(inferenceWinner, transferWinner) < 0);
+const winnerCard = { children: [], appendChild(child) { this.children.push(child); } };
+context.renderPrecisionRates(winnerCard, [transferWinner, inferenceWinner], 'gpu');
+assert.equal(winnerCard.children[3].textContent, '10.000');
+for (const id of gpuPaths) {
+  assert.equal(context.deviceColor({ kind: 'gpu', id }), context.deviceColor({ kind: 'gpu', target_id: id }));
+}
 const diagram = { children: [], appendChild(child) { this.children.push(child); }, replaceChildren() { this.children = []; } };
 context.renderMeasurementDiagram(diagram, [{ kind: 'gpu', precision: 'fp16', ok: true,
   flops_per_s: 2e12, gemm_shape: [2048, 2048, 2048],
@@ -89,7 +103,7 @@ for (const filename of (fs.existsSync(reportDirectory) ? fs.readdirSync(reportDi
   // Use the same legacy NaN/encoding normalization as the dashboard API.
   const python = process.env.PYTHON || require('node:path').join(__dirname, '../.venv/Scripts/python.exe');
   const report = JSON.parse(require('node:child_process').execFileSync(python, ['-c',
-    'import json, sys; from fairbench.report import load, json_safe; print(json.dumps(json_safe(load(sys.argv[1]))))',
+    'import json, sys; from fairbench.report import load, json_safe; r=load(sys.argv[1]); print(json.dumps(json_safe({"schema": r.get("schema"), "results": [{k:v for k,v in row.items() if k in ("kind", "precision", "ok", "flops_per_s", "flops", "error")} for row in r.get("results", [])]})))',
     require('node:path').join(reportDirectory, filename)], { encoding: 'utf8', cwd: require('node:path').join(__dirname, '..') }));
   for (const kind of ['cpu', 'gpu']) {
     if (report.schema !== 'fairbench.result/1') continue;

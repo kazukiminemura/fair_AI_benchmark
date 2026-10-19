@@ -125,7 +125,7 @@ def _run_throughput(backend, compiled, built, target, cfg, feed, result, job):
         job = {**job, 'cfg': cfg.to_dict()}
     if cfg.resident_io:
         result['measurement_scope'] = ('device_resident' if target.kind == 'gpu'
-                                       and target.device in getattr(backend, '_IO_DEVICES', {})
+                                       and hasattr(backend, 'io_device') and backend.io_device(target) != 'cpu'
                                        else 'persistent_requests')
 
     candidates = [cfg.requests] if cfg.requests else ([1, 2, 4, 8, 16, 32] if target.kind == "npu" else [1, 2, 4, 8])
