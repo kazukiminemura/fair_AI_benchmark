@@ -119,8 +119,9 @@ def _run_throughput(backend, compiled, built, target, cfg, feed, result, job):
 
     from .throughput import measure, measure_processes, parallel_memory_budget
 
-    if target.kind == 'gpu' and not cfg.resident_io and (
-            target.backend == 'openvino' or target.device in getattr(backend, '_IO_DEVICES', {})):
+    if target.kind in ('gpu', 'npu') and not cfg.resident_io and (
+            target.backend == 'openvino' or target.device in getattr(backend, '_IO_DEVICES', {})
+            or target.device == 'VitisAIExecutionProvider'):
         cfg = replace(cfg, resident_io=True)
         job = {**job, 'cfg': cfg.to_dict()}
     if cfg.resident_io:

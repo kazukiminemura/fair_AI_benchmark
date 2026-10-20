@@ -70,6 +70,20 @@ class OrtBackend(Backend):
             opts.setdefault("backend_path", "QnnHtp.dll")
         return opts
 
+    def _model_provider_options(self, built: BuiltModel, target: Target, precision: str) -> dict[str, Any]:
+        opts = self._provider_options(target, precision)
+        if (target.device == "VitisAIExecutionProvider" and target.kind == "npu"
+                and built.key == "precision_gemm_int8" and precision == "int8"
+                and opts.get("target", "X2") == "X2"
+                and not any(key in opts for key in ("config_file", "target_opts", "xclbin"))):
+            # X2's MatMul-to-Conv lowering inflated work and memory traffic on
+            # this GEMM. The WinML EP ignores a standalone target_opts override;
+            # use the tested X2 pass profile with integer MatMul preserved.
+            # Explicit compiler profiles always take precedence.
+            opts["config_file"] = str(Path(__file__).resolve().parents[1] / "vitisai_int8_gemm.json")
+            opts.setdefault("target", "X2")
+        return opts
+
     def _session_options(self, target: Target, cfg: RunConfig) -> Any:
         so = self.ort.SessionOptions()
         so.graph_optimization_level = self.ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -106,7 +120,7 @@ class OrtBackend(Backend):
 
     def compile(self, built: BuiltModel, target: Target, cfg: RunConfig, precision: str) -> CompiledModel:
         providers = [target.device]
-        provider_options = [self._provider_options(target, precision)]
+        provider_options = [self._model_provider_options(built, target, precision)]
         # Always keep the CPU EP as a silent fallback so a partially assignable
         # graph still runs; unassigned nodes are visible via `fallback_used`.
         if target.device != "CPUExecutionProvider" and not built.key.startswith("precision_gemm_"):
@@ -140,6 +154,7 @@ class OrtBackend(Backend):
             meta={
                 "execution_providers": active,
                 "requested_provider": target.device,
+                "provider_options": provider_options[0],
                 "fallback_used": bool(active and active[0] != target.device),
                 "intra_op_threads": so.intra_op_num_threads,
                 "inter_op_threads": so.inter_op_num_threads,
@@ -152,7 +167,7 @@ class OrtBackend(Backend):
         return compiled.handle.run(None, feed)
 
     def prepare_resident(self, compiled: CompiledModel, feed: dict[str, np.ndarray], target: Target):
-        if target.device not in self._IO_DEVICES:
+        if target.device not in self._IO_DEVICES and target.device != "VitisAIExecutionProvider":
             return super().prepare_resident(compiled, feed, target)
         binding, tensors = self._resident_binding(compiled, feed, target, warmup=1)
 
@@ -267,7 +282,7 @@ class OrtBackend(Backend):
             provider_options = {}
             if target.kind == "gpu":
                 options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
-                provider_options["provider_options"] = [self._provider_options(target, built.precision)]
+                provider_options["provider_options"] = [self._model_provider_options(built, target, built.precision)]
             session = self.ort.InferenceSession(self._model_source(built, target), options, providers=[target.device], **provider_options)
             try:
                 session.run(None, feed)

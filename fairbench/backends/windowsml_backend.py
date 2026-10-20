@@ -26,7 +26,7 @@ class WindowsMLBackend(OrtBackend):
         super().__init__()
         self.notes = windowsml.register()
 
-    def _create_session(self, built, target, cfg, *, profile_prefix=None):
+    def _create_session(self, built, target, cfg, *, profile_prefix=None, precision=None):
         selected = next((device for device in self.ort.get_ep_devices()
                          if windowsml.device_info(device)["key"] == target.options.get("winml_key")), None)
         if selected is None:
@@ -37,7 +37,9 @@ class WindowsMLBackend(OrtBackend):
         if profile_prefix:
             options.enable_profiling = True
             options.profile_file_prefix = profile_prefix
-        provider_options = dict(target.options.get("provider_options", {}))
+        provider_options = (self._model_provider_options(built, target, precision or built.precision)
+                            if target.device == "VitisAIExecutionProvider"
+                            else dict(target.options.get("provider_options", {})))
         if target.device.casefold() == windowsml.TENSORRT_RTX_PROVIDER.casefold():
             # Host buffers are the portable WinML path. CUDA graph capture
             # requires stable device bindings, which this path does not have.
@@ -60,7 +62,7 @@ class WindowsMLBackend(OrtBackend):
             # Its fused FP32 boundary does not reveal the internal GEMM type.
             with tempfile.TemporaryDirectory(prefix="fairbench-winml-verify-") as directory:
                 session, selected, options, provider_options, compile_ms = self._create_session(
-                    built, target, cfg, profile_prefix=str(Path(directory) / "profile"))
+                    built, target, cfg, profile_prefix=str(Path(directory) / "profile"), precision=precision)
                 try:
                     session.run(None, built.make_inputs(cfg.input_seed))
                 finally:
@@ -72,7 +74,7 @@ class WindowsMLBackend(OrtBackend):
             if not kernels or any(kernel.get("provider") != target.device for kernel in kernels):
                 raise BackendError("Windows ML TensorRT-RTX GPU assignment could not be verified; no throughput is reported.")
         else:
-            session, selected, options, provider_options, compile_ms = self._create_session(built, target, cfg)
+            session, selected, options, provider_options, compile_ms = self._create_session(built, target, cfg, precision=precision)
         return CompiledModel(
             handle=session, compile_ms=compile_ms,
             precision=precision, output_names=[output.name for output in session.get_outputs()],

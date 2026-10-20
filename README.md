@@ -95,6 +95,14 @@ FP16モデルがCPUでFP32実行される場合や、INT8モデルでもネイ�
 
 GPUの合計処理性能を測る場合は、詳細設定で「throughput」を選択します。対応GPUでは入出力バッファを再利用し、指定並列数（自動なら1・2・4・8）の処理量を測ります。概要の主値は並列処理全体のスループットで、単発の分離推論時間から換算した値とは区別します。OpenVINOの固定リクエストにはランタイム内部転送が含まれ、純粋なGPUカーネル性能ではありません。
 
+NPUのthroughput測定でも、OpenVINOとWindows ML Vitis AIで入出力バッファを再利用します。自動並列数は1・2・4・8・16・32です。Vitis AIではホスト側のバッファを固定するため、NPU内部の転送・変換時間は残ります。Windows MLにも共通のVitis AIプロバイダー設定を渡し、適用した設定を各試行の`session.provider_options`へ記録します。
+
+Vitis AIのINT8精度別GEMMでは、既定のX2ターゲットに対して同梱の`fairbench/vitisai_int8_gemm.json`を適用し、`enable_matmul_to_conv=false`を指定します。4096×4096の実機測定で、MatMulを畳み込みへ変換する経路に過剰な演算・転送が生じたためです。ONNXモデル、量子化、演算数は変更しません。ユーザー指定の`config_file`・`target_opts`・`xclbin`、およびX2以外の明示的ターゲットは優先し、この最適化を追加しません。
+
+この設定はWindows ML 2.4.89 / ORT 1.27.1のVitis AI EP（メタデータ版0.1.0）が出力したX2パス設定を基に、上記変換を無効にしたものです。Ryzen AI 7 445、ドライバー32.0.203.329で検証しています。このEPは単独の`target_opts`指定を反映しなかったため、パス設定を含めています。ランタイム更新時は互換性・性能を再検証してください。設定が非対応の場合、別精度やCPUへ切り替えて成功扱いにはしません。
+
+Vitis AIの「CPUフォールバック禁止」は、ONNX RuntimeのCPU EPへの割当を禁止する設定です。Vitis AI内部のCPU処理まで禁止するものではありません。したがって、INT8モデルのTOPSや分離推論時間を、ネイティブINT8のNPUカーネル性能と同一視できません。
+
 AMD NPUはAMDアカウントを使わずWindows MLのEP Catalogから準備できます。AMD機上で`uv run fairbench setup-npu`を実行し、続けて`uv run python -m scripts.validate_amd_npu`で4096×4096のFP16・INT8を検証します。CPUフォールバック禁止と正解照合を維持し、成功・失敗とも測定結果を`results/`へ保存します。両精度の成功時だけ終了コード0を返します。
 
 Vitis AIのプロバイダーはDLLと同じディレクトリのファイル一式（サブディレクトリを含む）を`.cache/windowsml/`へコピーして登録します。INT8 GEMMは符号付き対称・テンソル単位の量子化と出力QDQを使用します。旧INT8モデルとはグラフが異なるため、比較には再計測が必要です。FP16モデルのNPU対応は実機ランタイムに依存し、未対応時に別精度やCPUへ切り替えて成功扱いにはしません。
