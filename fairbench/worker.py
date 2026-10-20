@@ -291,7 +291,7 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
     feed = built.make_inputs(cfg.input_seed)
 
     # ---- correctness --------------------------------------------------
-    if cfg.check_correctness or (precision == "int8" and (target.backend == "tensorrt" or (
+    if cfg.check_correctness or (precision == "int8" and (target.backend in ("tensorrt", "vulkan") or (
             target.backend == "winml" and target.device.casefold() == "nvtensorrtrtxexecutionprovider"))):
         base_key = "precision_gemm" if key.startswith("precision_gemm_") else (key[: -len("_int8")] if key.endswith("_int8") else key)
         ref = reference_fingerprint(base_key, cfg.input_seed, cfg.gemm_size)

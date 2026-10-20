@@ -12,10 +12,11 @@ def installed_backends() -> dict[str, Backend]:
     from .openvino_backend import OpenVinoBackend
     from .ort_backend import OrtBackend
     from .tensorrt_backend import TensorRTBackend
+    from .vulkan_backend import VulkanBackend
     from .windowsml_backend import WindowsMLBackend
 
     out: dict[str, Backend] = {}
-    for cls in (OrtBackend, OpenVinoBackend, WindowsMLBackend, TensorRTBackend):
+    for cls in (OrtBackend, OpenVinoBackend, WindowsMLBackend, TensorRTBackend, VulkanBackend):
         try:
             if cls.is_installed():
                 out[cls.id] = cls()

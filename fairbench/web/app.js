@@ -1067,7 +1067,7 @@ function buildRunModal() {
   const backendSelect = $('optBackend');
   backendSelect.innerHTML = '';
   backendSelect.appendChild(el('option', { value: 'all' }, 'すべてのバックエンド'));
-  const backendNames = { ort: 'ONNX Runtime', openvino: 'OpenVINO', winml: 'Windows ML', tensorrt: 'NVIDIA TensorRT' };
+  const backendNames = { ort: 'ONNX Runtime', openvino: 'OpenVINO', winml: 'Windows ML', tensorrt: 'NVIDIA TensorRT', vulkan: 'AMD Vulkan INT8' };
   const availableBackends = new Set((cat.discovery?.targets || []).filter((t) => t.available !== false).map((t) => t.backend));
   Object.entries(backendNames).forEach(([key, name]) => {
     if (availableBackends.has(key)) backendSelect.appendChild(el('option', { value: key }, name));

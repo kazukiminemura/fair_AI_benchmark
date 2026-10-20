@@ -133,6 +133,18 @@ uv run fairbench run --backend tensorrt --workloads precision_gemm_int8 --mode t
 
 throughputはGPU常駐バッファで測定し、入力・出力転送を除外します。同期・起動・量子化／逆量子化の時間は含み、1 MAC = 2演算の行列積演算数からTOPSを算出します。蓄積精度と命令の逆アセンブルは未検証です。DirectMLの既存結果はINT8モデルの換算値として区別してください。TensorRTの確認方法は[NVIDIA Engine Inspector資料](https://docs.nvidia.com/deeplearning/tensorrt/10.x.x/inference-library/engine-tools.html)に基づきます。
 
+AMD GPUのINT8精度別GEMMには、`AMD Vulkan INT8 GPU`も利用できます。Vulkan 1.3と`VK_KHR_cooperative_matrix`を使い、選択したAMD GPUが16×16×16の符号付きINT8入力・INT32蓄積に対応することを確認してから専用パイプラインを作成します。標準のINT8 QDQモデルだけを対象に、重み・入力・出力量子化のスケール、丸め、クリッピング、行列形状、演算数を維持します。GPU上の量子化・整数行列積・出力変換をまとめて測定し、正解照合は常に実行します。未対応モデル・ドライバーは失敗理由を記録し、FP16/FP32の行列積やCPUへ切り替えません。元のDirectML経路も比較用に利用できます。
+
+```powershell
+uv sync
+uv run fairbench run --backend vulkan --workloads precision_gemm_int8 --mode throughput --requests 1 --gemm-size 4096
+uv run python -m scripts.check_vulkan --hardware
+```
+
+Windows x64ではVulkanのPythonバインディングも導入します。対応するGPUドライバーが必要です。独立した`vulkan`バックエンドとして検出するため、GUIのGPU一覧では`AMD Vulkan INT8 GPU`を選択します。throughputは固定バッファでGPUの完了フェンスまで待ち、ホストとの入出力コピーを除外します。latencyとE2Eはコピーを含みます。ホストからも見えるGPUバッファを使い、GPUによるメモリアクセスは推論時間に含まれます。API上の演算精度と実行結果は確認しますが、GPU命令の逆アセンブルは行いません。
+
+シェーダーのGLSLソースとSPIR-Vを`fairbench/shaders/`に同梱し、ソース・バイナリーのハッシュを検査します。実行にシェーダーコンパイラーは不要です。再生成には[Khronos glslang 16.6.0](https://github.com/KhronosGroup/glslang/releases/tag/16.6.0)を使い、`python -m scripts.build_vulkan_shaders --compiler <glslang.exeのパス>`を実行します。Vulkanの演算定義は[KHR_cooperative_matrix仕様](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_KHR_cooperative_matrix.html)に基づきます。
+
 Windows ML経由で呼ぶ場合は、Windows MLカタログのTensorRT-RTX EPを使います（前述のTensorRT 10直接実行とは別のランタイムです）。[対応機器・条件](https://learn.microsoft.com/windows/ai/new-windows-ml/supported-execution-providers)を確認し、次を実行してください。
 
 ```powershell

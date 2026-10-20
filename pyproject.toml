@@ -26,6 +26,7 @@ dependencies = [
     "qrcode>=8.2",
     "numpy>=1.26",
     "onnx>=1.16",
+    "vulkan>=1.3.275.1,<2; sys_platform == 'win32' and platform_machine == 'AMD64'",
     "onnxruntime-directml>=1.18; sys_platform == 'win32' and platform_machine == 'AMD64'",
     "onnxruntime>=1.18; sys_platform != 'win32' or platform_machine != 'AMD64'",
     "openvino>=2024.4; platform_machine == 'AMD64' or platform_machine == 'x86_64'",
@@ -65,7 +66,7 @@ include = ["fairbench*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-fairbench = ["web/*", "*.ps1", "*.json"]
+fairbench = ["web/*", "*.ps1", "*.json", "shaders/*"]
 
 [tool.ruff]
 line-length = 120

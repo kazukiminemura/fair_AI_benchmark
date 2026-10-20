@@ -411,6 +411,18 @@ def discover(fingerprint: system.SystemFingerprint | None = None, include_openvi
         if ov_version:
             d.runtimes["openvino"] = ov_version
 
+    from .backends.vulkan_backend import probe_runtime as probe_vulkan
+
+    vk = probe_vulkan()
+    if vk.get("vulkan_error"):
+        d.notes.append(f"Vulkan INT8: {vk['vulkan_error']}")
+    for device in vk.get("vulkan_devices", []):
+        d.runtimes["vulkan"] = vk["vulkan_version"]
+        d.targets.append(Target(
+            id=f"vulkan:gpu:{device['device_id']}", backend="vulkan", device="VulkanCooperativeMatrix",
+            kind="gpu", vendor="amd", label="AMD Vulkan INT8 GPU", detail=device["name"],
+            precisions=["int8"], runtime_version=vk["vulkan_version"], options=device))
+
     # Build the capability matrix the dashboard renders: for every Intel/AMD
     # slot, is there a target that fills it?
     caps: dict[str, dict] = {}

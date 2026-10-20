@@ -57,11 +57,13 @@ def format_execution_precision(row: dict[str, Any]) -> str:
         return "unverified"
     text = "/".join(sorted({names.get(value.lower(), value.upper()) for value in values}))
     if gpu_assigned:
-        if gpu.get("arithmetic_precision") == "int8" and gpu.get("runtime_execution_verified"):
-            return "INT8 (TensorRT measured engine: INT8 GEMM operands/tactic and execution verified; accumulator unverified)"
         evidence = gpu.get("evidence", [])
         if isinstance(evidence, str):
             evidence = [evidence]
+        if gpu.get("arithmetic_precision") == "int8" and gpu.get("runtime_execution_verified"):
+            if "vulkan_cooperative_matrix_pipeline" in evidence:
+                return "INT8 (Vulkan cooperative-matrix pipeline: signed INT8 operands, INT32 accumulation and execution verified)"
+            return "INT8 (TensorRT measured engine: INT8 GEMM operands/tactic and execution verified; accumulator unverified)"
         if "profiled_fused_graph" in evidence:
             return text + " (GPU-assigned graph operands: types from pre-optimization ONNX, not optimized/runtime types; native arithmetic/accumulator unverified)"
         return text + " (GPU profile operand types; source " + ("profiled inputs" if "profiled_compute_inputs" in evidence else "not recorded") + "; native arithmetic/accumulator unverified)"
