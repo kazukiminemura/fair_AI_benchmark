@@ -65,7 +65,7 @@ include = ["fairbench*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-fairbench = ["web/*", "*.ps1"]
+fairbench = ["web/*", "*.ps1", "*.json"]
 
 [tool.ruff]
 line-length = 120

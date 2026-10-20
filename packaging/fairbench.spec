@@ -31,6 +31,7 @@ ROOT = Path(SPECPATH).resolve().parent
 
 # The dashboard, extracted to sys._MEIPASS/web.
 datas = [(str(ROOT / "fairbench" / "web"), "web")]
+datas.append((str(ROOT / "fairbench" / "vitisai_int8_gemm.json"), "fairbench"))
 
 # ONNX Runtime's `transformers` helpers do bare top-level imports
 # (`from fusion_utils import NumpyHelper`), so PyInstaller cannot resolve them

@@ -144,6 +144,33 @@ def check_windowsml_selection() -> None:
             pass
         else:
             raise AssertionError("CPU fallback was reported as NPU execution")
+    # Windows ML must forward the same Vitis options as the direct ORT path.
+    # In particular, top-level cache/config options used to be dropped here.
+    amd = device("NPU")
+    amd.ep_name = "VitisAIExecutionProvider"
+    backend.ort.get_ep_devices = lambda: [amd]
+    session.get_providers.return_value = [amd.ep_name]
+    target = Target("winml-amd", "winml", amd.ep_name, "npu", "amd", "AMD NPU",
+                    options={"winml_key": windowsml.device_info(amd)["key"],
+                             "config_file": "compiler.json", "cache_dir": "cache",
+                             "provider_options": {"opt_level": "3"}})
+    options.reset_mock()
+    with (patch.object(backend, "_session_options", return_value=options),
+          patch.object(backend, "_model_source", return_value=b"model")):
+        compiled = backend.compile(built, target, RunConfig(), "int8")
+    expected = {"config_file": "compiler.json", "cache_dir": "cache", "opt_level": "3"}
+    options.add_provider_for_devices.assert_called_once_with([amd], expected)
+    assert compiled.meta["provider_options"] == expected
+    # The model-specific profile must also reach the selected WinML device.
+    built.key = "precision_gemm_int8"
+    target.options = {"winml_key": windowsml.device_info(amd)["key"]}
+    options.reset_mock()
+    with (patch.object(backend, "_session_options", return_value=options),
+          patch.object(backend, "_model_source", return_value=b"model")):
+        compiled = backend.compile(built, target, RunConfig(), "int8")
+    applied = options.add_provider_for_devices.call_args.args[1]
+    assert Path(applied["config_file"]).is_file() and applied["target"] == "X2"
+    assert compiled.meta["provider_options"] == applied
     print("Windows ML checks passed: explicit GPU/NPU distinction, strict CPU fallback rejection.")
 
 
@@ -535,9 +562,13 @@ def check_npu_int8_and_memory() -> None:
                 "host_cpu_seconds": 0.1}
     with patch("fairbench.throughput.measure", side_effect=measured), \
             patch("fairbench.throughput.available_memory_bytes", return_value=64 * 1024**3):
-        sweep = worker._run_throughput(MagicMock(), MagicMock(output_names=[]), built, npu, cfg,
+        mock_backend = MagicMock()
+        mock_backend.prepare_resident.return_value = (lambda: None, lambda: [])
+        sweep = worker._run_throughput(mock_backend, MagicMock(output_names=[]), built, npu, cfg,
                                        {}, {"warnings": []}, {"precision": "int8"})
     assert counts == [1, 2, 4, 8, 16, 32] and sweep["concurrent_requests"] == 32
+    assert sweep["measurement_scope"] == "persistent_requests"
+    assert mock_backend.prepare_resident.call_count == sum(counts)
     mem = system.MemoryInfo(total_gib=0.03125)
     with patch.object(system.time, "perf_counter", side_effect=range(10)):
         system.measure_memory_bandwidth(mem)
