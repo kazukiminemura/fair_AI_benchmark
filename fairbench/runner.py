@@ -135,6 +135,10 @@ def verify_targets(targets: list[Target], cfg: RunConfig, progress: ProgressFn |
             "repeat_index": 0,
             "power_sources": [],
         }
+        if target.backend == "vulkan":
+            # Verify the same integer pipeline used by the restricted backend.
+            job.update(workload="precision_gemm_int8", precision="int8",
+                       cfg={**probe_cfg.to_dict(), "gemm_size": 512, "check_correctness": True})
         result = spawn_worker(job, timeout=180.0, tag=f"verify-{_slug(target.id)}")
         verdicts[target.id] = {
             "ok": bool(result.get("ok")),
@@ -458,7 +462,9 @@ def _aggregate(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "arithmetic_precision": "int8" if len(confirmed) == len(good) and all(
                     probe.get("arithmetic_precision") == "int8" and probe.get("runtime_execution_verified")
                     for probe in confirmed) else "unverified",
-                "accumulator_precision": "unverified",
+                "accumulator_precision": (confirmed[0].get("accumulator_precision", "unverified")
+                    if len(confirmed) == len(good) and confirmed and len({
+                        probe.get("accumulator_precision", "unverified") for probe in confirmed}) == 1 else "unverified"),
                 "runtime_execution_verified": len(confirmed) == len(good) and all(
                     probe.get("runtime_execution_verified", False) for probe in confirmed),
                 "reason": "; ".join(sorted({probe.get("reason", "Precision probe missing in a repeat.")

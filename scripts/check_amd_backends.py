@@ -13,7 +13,8 @@ def main():
                devices.Target('ov', 'winml', 'OpenVINOExecutionProvider', 'cpu', 'amd', 'OpenVINO')]
     with patch.object(devices, '_ort_targets', return_value=(targets, 'test', [])), \
             patch.object(devices, '_openvino_targets', return_value=([], 'test', [])) as native, \
-            patch.object(interp, 'probe_all', return_value=[]):
+            patch.object(interp, 'probe_all', return_value=[]), \
+            patch('fairbench.backends.vulkan_backend.probe_runtime', return_value={}):
         discovery = devices.discover(fingerprint)
         native.assert_not_called()
         assert [target.id for target in discovery.targets] == ['cpu', 'npu']

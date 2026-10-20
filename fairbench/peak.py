@@ -16,10 +16,10 @@ def search(target: Target, workload: str, cfg: RunConfig, progress: Callable | N
         raise ValueError("Peak search requires the FP16/INT8 precision GEMM workloads.")
     budget = cfg.resolve_threads()
     trials = []
-    resident = target.backend == "tensorrt" or target.backend in ("ort", "openvino") and (
+    resident = target.backend in ("tensorrt", "vulkan") or target.backend in ("ort", "openvino") and (
         target.backend == "openvino" or target.device in (
             "CPUExecutionProvider", "DmlExecutionProvider", "CUDAExecutionProvider", "ROCMExecutionProvider"))
-    scope = ("device_resident" if resident and target.backend in ("ort", "tensorrt") and target.kind == "gpu"
+    scope = ("device_resident" if resident and target.backend in ("ort", "tensorrt", "vulkan") and target.kind == "gpu"
              else "persistent_requests" if resident else "host_to_host")
 
     def probe(size, requests, threads):

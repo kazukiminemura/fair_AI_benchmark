@@ -45,7 +45,8 @@ def main():
     info = interp.Interpreter("trt-python", available=True, tensorrt_version="10.13.3.9",
                              tensorrt_devices=[{"device_id": 0, "name": "RTX 3060 Ti", "compute_capability": [8, 6]}])
     with patch.object(devices, "_ort_targets", return_value=([], "", [])), \
-            patch.object(interp, "probe_all", return_value=[info, info]):
+            patch.object(interp, "probe_all", return_value=[info, info]), \
+            patch("fairbench.backends.vulkan_backend.probe_runtime", return_value={}):
         discovery = devices.discover(SystemFingerprint(), include_openvino=False)
     assert len(discovery.available()) == 1
     assert discovery.available()[0].python == "trt-python"

@@ -32,6 +32,7 @@ ROOT = Path(SPECPATH).resolve().parent
 # The dashboard, extracted to sys._MEIPASS/web.
 datas = [(str(ROOT / "fairbench" / "web"), "web")]
 datas.append((str(ROOT / "fairbench" / "vitisai_int8_gemm.json"), "fairbench"))
+datas.append((str(ROOT / "fairbench" / "shaders"), "fairbench/shaders"))
 
 # ONNX Runtime's `transformers` helpers do bare top-level imports
 # (`from fusion_utils import NumpyHelper`), so PyInstaller cannot resolve them
@@ -46,6 +47,7 @@ if _ORT_TRANSFORMERS.is_dir():
 binaries = collect_dynamic_libs("onnxruntime")
 
 hiddenimports = [
+    *collect_submodules("vulkan"),
     "onnxruntime.capi._pybind_state",
     "onnxruntime.quantization",
     # ORT 1.24's data-file transformer helpers import this by its bare name.

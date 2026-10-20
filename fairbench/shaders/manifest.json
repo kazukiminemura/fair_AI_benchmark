@@ -1,0 +1,18 @@
+{
+  "compiler": "glslang 16.6.0",
+  "target": "vulkan1.3",
+  "shaders": {
+    "int8_gemm": {
+      "source_sha256": "2bd48528e8a92b50e1afd67e9add4195b17398192f88db1eccfd83a90def1e17",
+      "spirv_sha256": "c4e9b6b7ed5f709a51a7b838cb7db900776fbf216477c7810781cbd43300304d"
+    },
+    "int8_output": {
+      "source_sha256": "2ab02de35be19627f5cc48b1e0a8600b6fc984438ffb6d2b71425317d95905ff",
+      "spirv_sha256": "43dd72eac3d9911cc390161484fe7d683b5aceecc10d956e3bf58fdb0504dd4d"
+    },
+    "int8_quantize": {
+      "source_sha256": "8b444e62162f068a46a20381d405102bd627a10e8bb56a787f366b9c530912cd",
+      "spirv_sha256": "b0ad3065293df786b65f35c4b5245c20884b53eb53df6f9c40728edcb8ee07bf"
+    }
+  }
+}

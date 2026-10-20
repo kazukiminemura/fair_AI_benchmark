@@ -586,7 +586,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ver.set_defaults(func=cmd_verify)
 
     p_run = sub.add_parser("run", help="run the benchmark suite")
-    p_run.add_argument("--backend", choices=["all", "ort", "openvino", "winml", "tensorrt"], default="all", help="runtime to benchmark (default: all available)")
+    p_run.add_argument("--backend", choices=["all", "ort", "openvino", "winml", "tensorrt", "vulkan"], default="all", help="runtime to benchmark (default: all available)")
     p_run.add_argument("--suite", choices=list(WORKLOAD_SETS), default="standard", help="measurement workload set; --workloads overrides it")
     p_run.add_argument("--mode", choices=["latency", "throughput", "peak"], default=None)
     p_run.add_argument("--requests", type=int, choices=range(33), default=0, metavar="0..32", help="throughput concurrency; 0 sweeps 1/2/4/8 (NPU also 16/32)")
