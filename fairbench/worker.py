@@ -25,7 +25,7 @@ from typing import Any
 
 import numpy as np
 
-from . import models
+from . import models, windowsml
 from .backends import BackendError, get_backend
 from .config import RunConfig
 from .devices import Target
@@ -121,7 +121,8 @@ def _run_throughput(backend, compiled, built, target, cfg, feed, result, job):
 
     if target.kind in ('gpu', 'npu') and not cfg.resident_io and (
             target.backend == 'openvino' or target.device in getattr(backend, '_IO_DEVICES', {})
-            or target.device == 'VitisAIExecutionProvider'):
+            or target.device == 'VitisAIExecutionProvider'
+            or target.backend == 'winml' and target.device == windowsml.MIGRAPHX_PROVIDER):
         cfg = replace(cfg, resident_io=True)
         job = {**job, 'cfg': cfg.to_dict()}
     if cfg.resident_io:
@@ -292,7 +293,7 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
 
     # ---- correctness --------------------------------------------------
     if cfg.check_correctness or (precision == "int8" and (target.backend in ("tensorrt", "vulkan") or (
-            target.backend == "winml" and target.device.casefold() == "nvtensorrtrtxexecutionprovider"))):
+            target.backend == "winml" and windowsml.is_catalog_gpu(target.device)))):
         base_key = "precision_gemm" if key.startswith("precision_gemm_") else (key[: -len("_int8")] if key.endswith("_int8") else key)
         ref = reference_fingerprint(base_key, cfg.input_seed, cfg.gemm_size)
         try:
@@ -319,7 +320,7 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
             result.update(error="Output correctness could not be verified; throughput is not published.", phase="correctness")
             return result
 
-    if target.backend == "winml" and target.device.casefold() == "nvtensorrtrtxexecutionprovider" and precision == "int8":
+    if target.backend == "winml" and windowsml.is_catalog_gpu(target.device) and precision == "int8":
         evidence = compiled.meta.get("gpu_precision") or {}
         if evidence.get("arithmetic_precision") != "int8" or not evidence.get("runtime_execution_verified"):
             result["measurement_validity"] = compiled.meta["measurement_validity"] = "model_only"

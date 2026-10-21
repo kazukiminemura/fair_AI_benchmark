@@ -167,7 +167,8 @@ class OrtBackend(Backend):
         return compiled.handle.run(None, feed)
 
     def prepare_resident(self, compiled: CompiledModel, feed: dict[str, np.ndarray], target: Target):
-        if target.device not in self._IO_DEVICES and target.device != "VitisAIExecutionProvider":
+        if (target.device not in self._IO_DEVICES and target.device != "VitisAIExecutionProvider"
+                and not (target.backend == "winml" and target.device == "MIGraphXExecutionProvider")):
             return super().prepare_resident(compiled, feed, target)
         binding, tensors = self._resident_binding(compiled, feed, target, warmup=1)
 
@@ -313,7 +314,7 @@ class OrtBackend(Backend):
             if len(nodes) != len([node for node in built.model.graph.node if node.op_type in operators]):
                 return {"available": False, "reason": "Profile does not expose every compute operator."}
         elif (len(kernels) == 1 and (kernels[0].get("op_name", "").startswith("DmlFusedNode")
-              or target.backend == "winml" and target.device.casefold() == "nvtensorrtrtxexecutionprovider"
+              or target.backend == "winml" and target.device.casefold() in ("nvtensorrtrtxexecutionprovider", "migraphxexecutionprovider")
               and kernels[0].get("op_name", "").startswith(target.device + "_"))
               and built.key.startswith("precision_gemm_")):
             graph = onnx.shape_inference.infer_shapes(built.model).graph

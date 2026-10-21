@@ -57,10 +57,12 @@ class WindowsMLBackend(OrtBackend):
 
     def compile(self, built, target, cfg, precision) -> CompiledModel:
         gpu_precision = None
-        if target.device.casefold() == windowsml.TENSORRT_RTX_PROVIDER.casefold():
+        if target.kind == "gpu" and windowsml.is_catalog_gpu(target.device):
             # Profile this very session once and stop profiling before timing.
             # Its fused FP32 boundary does not reveal the internal GEMM type.
-            with tempfile.TemporaryDirectory(prefix="fairbench-winml-verify-") as directory:
+            # A failed native compile can retain the profile handle until ORT
+            # unwinds. Do not hide its error with Windows file-cleanup errors.
+            with tempfile.TemporaryDirectory(prefix="fairbench-winml-verify-", ignore_cleanup_errors=True) as directory:
                 session, selected, options, provider_options, compile_ms = self._create_session(
                     built, target, cfg, profile_prefix=str(Path(directory) / "profile"), precision=precision)
                 try:
@@ -72,7 +74,7 @@ class WindowsMLBackend(OrtBackend):
             kernels = [event.get("args", {}) for event in events
                        if event.get("cat") == "Node" and event.get("name", "").endswith("_kernel_time")]
             if not kernels or any(kernel.get("provider") != target.device for kernel in kernels):
-                raise BackendError("Windows ML TensorRT-RTX GPU assignment could not be verified; no throughput is reported.")
+                raise BackendError(f"Windows ML {target.device} GPU assignment could not be verified; no throughput is reported.")
         else:
             session, selected, options, provider_options, compile_ms = self._create_session(built, target, cfg, precision=precision)
         return CompiledModel(
@@ -93,7 +95,7 @@ class WindowsMLBackend(OrtBackend):
     def _profile_events(self, built, target, cfg, feed):
         # Use the same V2 device selection as measurement. A providers=[name]
         # session cannot prove assignment to a catalog-registered WinML device.
-        with tempfile.TemporaryDirectory(prefix="fairbench-winml-profile-") as directory:
+        with tempfile.TemporaryDirectory(prefix="fairbench-winml-profile-", ignore_cleanup_errors=True) as directory:
             session, *_ = self._create_session(built, target, cfg, profile_prefix=str(Path(directory) / "profile"))
             try:
                 session.run(None, feed)
