@@ -39,7 +39,7 @@ SLOTS: list[Slot] = [
     Slot("intel:gpu", "intel", "gpu", "Intel GPU (Iris Xe / Arc)", "OpenVINO GPU plugin / DirectML"),
     Slot("intel:npu", "intel", "npu", "Intel NPU (AI Boost)", "OpenVINO NPU plugin (Core Ultra 100/200V/200H)"),
     Slot("amd:cpu", "amd", "cpu", "AMD CPU", "ONNX Runtime CPU EP / OpenVINO CPU plugin"),
-    Slot("amd:gpu", "amd", "gpu", "AMD GPU (Radeon / iGPU)", "DirectML (Windows) / ROCm (Linux)"),
+    Slot("amd:gpu", "amd", "gpu", "AMD GPU (Radeon / iGPU)", "Windows ML MIGraphX / DirectML (Windows) / ROCm (Linux)"),
     Slot("amd:npu", "amd", "npu", "AMD NPU (XDNA / Ryzen AI)", "Windows ML Vitis AI EP / Ryzen AI SW"),
 ]
 
@@ -189,7 +189,8 @@ def _ort_targets(fp: system.SystemFingerprint) -> tuple[list[Target], str, list[
                     label=f"Windows ML {'TensorRT-RTX' if device['provider'].casefold() == 'nvtensorrtrtxexecutionprovider' else device['provider'].removesuffix('ExecutionProvider')}"
                           + ("" if device["provider"] == "CPUExecutionProvider" else f" {kind.upper()}"),
                     detail=device["description"], runtime_version=info.onnxruntime or "?",
-                    precisions=["fp32", "fp16"] if device['provider'].casefold() == 'nvtensorrtrtxexecutionprovider' else ["fp32"],
+                    precisions=(["fp32", "fp16", "int8"] if device['provider'].casefold() == 'migraphxexecutionprovider'
+                                else ["fp32", "fp16"] if device['provider'].casefold() == 'nvtensorrtrtxexecutionprovider' else ["fp32"]),
                     python="" if info.primary else info.path,
                     options={"winml_key": device["key"], "windowsml_version": info.winml_version},
                 ))

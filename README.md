@@ -133,6 +133,19 @@ uv run fairbench run --backend tensorrt --workloads precision_gemm_int8 --mode t
 
 throughputはGPU常駐バッファで測定し、入力・出力転送を除外します。同期・起動・量子化／逆量子化の時間は含み、1 MAC = 2演算の行列積演算数からTOPSを算出します。蓄積精度と命令の逆アセンブルは未検証です。DirectMLの既存結果はINT8モデルの換算値として区別してください。TensorRTの確認方法は[NVIDIA Engine Inspector資料](https://docs.nvidia.com/deeplearning/tensorrt/10.x.x/inference-library/engine-tools.html)に基づきます。
 
+AMD GPUはWindows ML EP Catalogの`MIGraphXExecutionProvider`からも計測できます。[Microsoftの対応表](https://learn.microsoft.com/ja-jp/windows/ai/new-windows-ml/supported-execution-providers?tabs=winml2)では、Windows 11 24H2以降、RDNA 3以降のGPU、AMD GPUドライバー25.10.13.09以降が要件です。GenAI用途は未対応です。
+
+```powershell
+uv run fairbench setup-winml --migraphx
+uv run fairbench verify --targets MIGraphXExecutionProvider
+uv run fairbench run --backend winml --targets MIGraphXExecutionProvider --mode throughput --requests 1
+.venv-winml/Scripts/python.exe -m scripts.validate_winml_gpu
+```
+
+GUIでは「機器を再検出」後に`Windows ML MIGraphX GPU`を選択します。Windows MLのデバイス指定APIでGPUを固定し、測定するセッションを事前にプロファイルしてGPUへの割当を検証します。CPUフォールバックは禁止します。FP16とINT8 QDQモデルを測定し、INT8の内部演算精度を確認できない場合はモデル換算値として表示します。throughputは固定ホストバッファを再利用しますが、ランタイム内部のGPU転送は含まれます。
+
+EPが列挙されても個々のGPU向けカーネルが配布物に含まれない場合は計測できません。Radeon 840M（gfx1153）ではEPパッケージ`1.8.64.0`が`invalid device function`で失敗することを確認しています。対応EPの配布が必要です。失敗理由は結果とWorker logへ保存します。この場合、現在のWindows ML `DmlExecutionProvider`経路は別の測定対象として選択でき、`scripts.validate_winml_gpu --provider dml`で検証できます。
+
 AMD GPUのINT8精度別GEMMには、`AMD Vulkan INT8 GPU`も利用できます。Vulkan 1.3と`VK_KHR_cooperative_matrix`を使い、選択したAMD GPUが16×16×16の符号付きINT8入力・INT32蓄積に対応することを確認してから専用パイプラインを作成します。標準のINT8 QDQモデルだけを対象に、重み・入力・出力量子化のスケール、丸め、クリッピング、行列形状、演算数を維持します。GPU上の量子化・整数行列積・出力変換をまとめて測定し、正解照合は常に実行します。未対応モデル・ドライバーは失敗理由を記録し、FP16/FP32の行列積やCPUへ切り替えません。元のDirectML経路も比較用に利用できます。
 
 ```powershell

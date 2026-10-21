@@ -237,7 +237,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
     cfg = RunConfig(repeats=1, measure_power=False, physical_cores=system.collect().cpu.physical_cores)
     fp = system.collect()
     disc = discover(fp)
-    targets = [t for t in disc.available() if not args.targets or t.id in args.targets or t.backend in args.targets]
+    targets = [t for t in disc.available() if not args.targets or t.id in args.targets
+               or t.backend in args.targets or t.device in args.targets]
     banner()
     print(f"{c('VERIFYING', BOLD)} {len(targets)} target(s)\n")
     verdicts = verify_targets(targets, cfg, _print_progress)
@@ -312,6 +313,9 @@ def cmd_setup_winml(args: argparse.Namespace) -> int:
     if getattr(args, "tensorrt", False):
         from .windowsml import TENSORRT_RTX_PROVIDER
         command += ["--provider", TENSORRT_RTX_PROVIDER]
+    elif getattr(args, "migraphx", False):
+        from .windowsml import MIGRAPHX_PROVIDER
+        command += ["--provider", MIGRAPHX_PROVIDER]
     elif args.provider:
         command += ["--provider", args.provider]
     if args.require_npu:
@@ -635,6 +639,7 @@ def build_parser() -> argparse.ArgumentParser:
     winml_provider = p_winml.add_mutually_exclusive_group()
     winml_provider.add_argument("--provider", help="download only this execution provider (e.g. VitisAIExecutionProvider)")
     winml_provider.add_argument("--tensorrt", action="store_true", help="prepare the Windows ML TensorRT-RTX provider for NVIDIA GPUs")
+    winml_provider.add_argument("--migraphx", action="store_true", help="prepare the Windows ML MIGraphX provider for AMD RDNA 3+ GPUs")
     p_winml.add_argument("--require-npu", action="store_true", help="fail if the requested NPU is not exposed")
     p_winml.set_defaults(func=cmd_setup_winml)
 

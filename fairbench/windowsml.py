@@ -12,6 +12,11 @@ from importlib.metadata import version
 from pathlib import Path
 
 TENSORRT_RTX_PROVIDER = "NvTensorRTRTXExecutionProvider"
+MIGRAPHX_PROVIDER = "MIGraphXExecutionProvider"
+
+
+def is_catalog_gpu(provider: str) -> bool:
+    return provider.casefold() in {TENSORRT_RTX_PROVIDER.casefold(), MIGRAPHX_PROVIDER.casefold()}
 
 _registered: set[str] = set()
 _dll_directories: dict[str, object] = {}

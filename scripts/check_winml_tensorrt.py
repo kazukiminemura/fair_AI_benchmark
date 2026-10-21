@@ -18,8 +18,7 @@ from fairbench.report import format_compute_rate
 from fairbench.runner import _aggregate
 
 
-def main():
-    provider = windowsml.TENSORRT_RTX_PROVIDER
+def main(provider=windowsml.TENSORRT_RTX_PROVIDER):
     target = Target('winml:rtx', 'winml', provider, 'gpu', 'nvidia', 'WinML RTX', options={'winml_key': 'selected'})
     selected = object()
     backend = object.__new__(WindowsMLBackend)
@@ -58,7 +57,8 @@ def main():
         assert compiled.meta['execution_assignment']['profiling_stopped_before_timing']
         assert compiled.meta['gpu_precision']['tensor_precisions'] == ['float16']
         assert compiled.meta['gpu_precision']['arithmetic_precision'] == 'unverified'
-        configs[-1].add_provider_for_devices.assert_called_once_with([selected], {'enable_cuda_graph': '0'})
+        configs[-1].add_provider_for_devices.assert_called_once_with(
+            [selected], {'enable_cuda_graph': '0'} if provider == windowsml.TENSORRT_RTX_PROVIDER else {})
         configs[-1].add_session_config_entry.assert_called_with('session.disable_cpu_ep_fallback', '1')
         backend._profile_events(model, target, RunConfig(), model.make_inputs(1337))
         assert configs[-1].enable_profiling is True
@@ -75,7 +75,8 @@ def main():
     output = [np.ones(2, dtype=np.float32)]
     fake = SimpleNamespace(compile=lambda *args: CompiledModel(None, 0, 'int8', ['y'], {
         'gpu_precision': {'available': False, 'arithmetic_precision': 'unverified'}}), run=lambda *args: output,
-        diagnose=lambda *args: {'available': False})
+        diagnose=lambda *args: {'available': False},
+        prepare_resident=lambda *args: (lambda: output, lambda: output), io_device=lambda *args: 'cpu')
     with patch.object(worker, 'get_backend', return_value=fake), \
             patch.object(worker, 'reference_fingerprint', return_value=worker._fingerprint(output)):
         for mode in ('latency', 'throughput'):
@@ -85,6 +86,8 @@ def main():
                                                        max_seconds=1, warmup=0, measure_power=False).to_dict()})
             assert result['correctness']['valid'] and result['ok'], result.get('error')
             assert result['units_per_s'] > 0 and result['flops_per_s'] is None
+            if provider == windowsml.MIGRAPHX_PROVIDER and mode == 'throughput':
+                assert result['measurement_scope'] == 'persistent_requests'
             assert result['measurement_validity'] == 'model_only'
             assert result['session']['measurement_validity'] == 'model_only'
             row = _aggregate([result])[0]
@@ -104,11 +107,11 @@ def main():
     ort = MagicMock()
     with patch.dict(sys.modules, windowsml=module, onnxruntime=ort), \
             patch.object(windowsml, '_registered', set()):
-        assert windowsml.register(download=True, provider_name='NvTensorRtRtxExecutionProvider') == []
+        assert windowsml.register(download=True, provider_name=provider.swapcase()) == []
         ort.register_execution_provider_library.assert_called_once_with(provider, 'vendor.dll')
     args = cli.build_parser().parse_args(['setup-winml', '--tensorrt'])
     assert args.tensorrt and args.provider is None
-    print('WinML TensorRT checks passed: V2 device selection, measured-session profiling, no CPU fallback, '
+    print(f'WinML {provider} checks passed: V2 device selection, measured-session profiling, no CPU fallback, '
           'model-only timing without native INT8 TOPS, provider spelling and setup command.')
 
 

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from math import isfinite
 
+from . import windowsml
 from .config import RunConfig
 from .devices import Target
 from .throughput import parallel_memory_budget
@@ -19,6 +20,7 @@ def search(target: Target, workload: str, cfg: RunConfig, progress: Callable | N
     resident = target.backend in ("tensorrt", "vulkan") or target.backend in ("ort", "openvino") and (
         target.backend == "openvino" or target.device in (
             "CPUExecutionProvider", "DmlExecutionProvider", "CUDAExecutionProvider", "ROCMExecutionProvider"))
+    resident = resident or target.backend == "winml" and target.device == windowsml.MIGRAPHX_PROVIDER
     scope = ("device_resident" if resident and target.backend in ("ort", "tensorrt", "vulkan") and target.kind == "gpu"
              else "persistent_requests" if resident else "host_to_host")
 
