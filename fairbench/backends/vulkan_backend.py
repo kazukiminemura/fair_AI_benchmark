@@ -134,6 +134,17 @@ def _vector_grid(elements):
     return x, (groups + x - 1) // x
 
 
+def _pack_weights(weight):
+    """Store each 16x16 B tile contiguously, in column-major order.
+
+    This changes storage only: B[k, n] still participates in A[m, k]*B[k, n].
+    Packing constant weights belongs to compilation, like runtime prepacking.
+    Input A is packed by the timed GPU quantization shader on every inference.
+    """
+    k, n = weight.shape
+    return weight.reshape(k//16, 16, n//16, 16).transpose(2, 0, 3, 1).copy()
+
+
 class _Execution:
     def __init__(self, built, target, values):
         import vulkan as v
@@ -173,7 +184,7 @@ class _Execution:
             m, k, n = self.shape
             self.buffers = [self._buffer(size, cached=i == 4)
                             for i, size in enumerate((4*m*k, k*n, m*k, 4*m*n, 4*m*n))]
-            self.buffers[1][1][:] = values["weight"].tobytes()
+            self.buffers[1][1][:] = _pack_weights(values["weight"]).tobytes()
             self.parameters = struct.pack("<IIIfff", m, k, n, float(values["input_scale"]),
                                           float(values["weight_scale"]), float(values["output_scale"]))
             bindings = [v.VkDescriptorSetLayoutBinding(binding=i, descriptorType=v.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -315,6 +326,7 @@ class VulkanBackend(Backend):
             "spirv_evidence": execution.spirv_evidence,
             "device": execution.device_info,
             "source_model_sha256": built.sha256, "buffer_memory": "host_visible_coherent_device_buffers",
+            "matrix_storage": "packed_16x16_A_row_major_B_column_major",
             "gpu_precision": {"available": False, "arithmetic_precision": "int8", "accumulator_precision": "int32",
                 "tensor_precisions": ["int8"], "evidence": "vulkan_cooperative_matrix_pipeline",
                 "runtime_execution_verified": False,

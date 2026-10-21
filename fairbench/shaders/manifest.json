@@ -3,16 +3,16 @@
   "target": "vulkan1.3",
   "shaders": {
     "int8_gemm": {
-      "source_sha256": "2bd48528e8a92b50e1afd67e9add4195b17398192f88db1eccfd83a90def1e17",
-      "spirv_sha256": "c4e9b6b7ed5f709a51a7b838cb7db900776fbf216477c7810781cbd43300304d"
+      "source_sha256": "fee160f7b84ee9c1e8f05ad64e9e8c8a6526eb4a66f0f5f23521df87828880c7",
+      "spirv_sha256": "5cdfffa6590ff04799e7b3a2f5ca986c6ebc54b221aa0f9515ee9f8fca870e7c"
     },
     "int8_output": {
       "source_sha256": "2ab02de35be19627f5cc48b1e0a8600b6fc984438ffb6d2b71425317d95905ff",
       "spirv_sha256": "43dd72eac3d9911cc390161484fe7d683b5aceecc10d956e3bf58fdb0504dd4d"
     },
     "int8_quantize": {
-      "source_sha256": "8b444e62162f068a46a20381d405102bd627a10e8bb56a787f366b9c530912cd",
-      "spirv_sha256": "b0ad3065293df786b65f35c4b5245c20884b53eb53df6f9c40728edcb8ee07bf"
+      "source_sha256": "32a26537daf162bb83651f6d8e52dada6accb3d5538f94266bdcf57399b3a8cd",
+      "spirv_sha256": "ae14e9c9e12a5be6ee34dfbf13cc4ae139a9ccf7224da5891c4649059528cc65"
     }
   }
 }
