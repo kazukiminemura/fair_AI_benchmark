@@ -8,5 +8,9 @@ layout(set=0,binding=0,std430) readonly buffer X { float x[]; };
 layout(set=0,binding=2,std430) buffer A { int8_t a[]; };
 void main() {
  uint i=(gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x)*256+gl_LocalInvocationIndex;
- if(i<p.rows*p.inner) a[i]=int8_t(clamp(roundEven(x[i]/p.inputScale),-128.0,127.0));
+ if(i<p.rows*p.inner) {
+  uint row=i/p.inner, col=i%p.inner;
+  uint packed=(row/16*(p.inner/16)+col/16)*256+(row%16)*16+col%16;
+  a[packed]=int8_t(clamp(roundEven(x[i]/p.inputScale),-128.0,127.0));
+ }
 }

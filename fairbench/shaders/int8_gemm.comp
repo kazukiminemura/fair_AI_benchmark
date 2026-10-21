@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // 32x32 output tile; signed INT8 cooperative matrices with INT32 accumulation.
+// Each operand's 16x16 tile is contiguous, avoiding strided global gathers.
 #version 460
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_cooperative_matrix : require
@@ -17,17 +18,15 @@ layout(push_constant) uniform Params { uint rows; uint inner; uint columns; floa
 void main() {
  uint m=gl_WorkGroupID.y*32;
  uint n=gl_WorkGroupID.x*32;
- coopmat<int8_t,gl_ScopeSubgroup,16,16,gl_MatrixUseA> ma;
- coopmat<int8_t,gl_ScopeSubgroup,16,16,gl_MatrixUseB> mb;
  coopmat<int,gl_ScopeSubgroup,16,16,gl_MatrixUseAccumulator> c00=coopmat<int,gl_ScopeSubgroup,16,16,gl_MatrixUseAccumulator>(0);
  coopmat<int,gl_ScopeSubgroup,16,16,gl_MatrixUseAccumulator> c01=c00,c10=c00,c11=c00;
  for(uint kk=0;kk<p.inner;kk+=16) {
    coopmat<int8_t,gl_ScopeSubgroup,16,16,gl_MatrixUseA> a0,a1;
    coopmat<int8_t,gl_ScopeSubgroup,16,16,gl_MatrixUseB> b0,b1;
-   coopMatLoad(a0,a,m*p.inner+kk,p.inner,gl_CooperativeMatrixLayoutRowMajor);
-   coopMatLoad(a1,a,(m+16)*p.inner+kk,p.inner,gl_CooperativeMatrixLayoutRowMajor);
-   coopMatLoad(b0,b,kk*p.columns+n,p.columns,gl_CooperativeMatrixLayoutRowMajor);
-   coopMatLoad(b1,b,kk*p.columns+n+16,p.columns,gl_CooperativeMatrixLayoutRowMajor);
+   coopMatLoad(a0,a,(m/16*(p.inner/16)+kk/16)*256,16,gl_CooperativeMatrixLayoutRowMajor);
+   coopMatLoad(a1,a,((m/16+1)*(p.inner/16)+kk/16)*256,16,gl_CooperativeMatrixLayoutRowMajor);
+   coopMatLoad(b0,b,(n/16*(p.inner/16)+kk/16)*256,16,gl_CooperativeMatrixLayoutColumnMajor);
+   coopMatLoad(b1,b,((n/16+1)*(p.inner/16)+kk/16)*256,16,gl_CooperativeMatrixLayoutColumnMajor);
    c00=coopMatMulAdd(a0,b0,c00);c01=coopMatMulAdd(a0,b1,c01);
    c10=coopMatMulAdd(a1,b0,c10);c11=coopMatMulAdd(a1,b1,c11);
  }

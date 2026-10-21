@@ -143,6 +143,8 @@ uv run python -m scripts.check_vulkan --hardware
 
 Windows x64ではVulkanのPythonバインディングも導入します。対応するGPUドライバーが必要です。独立した`vulkan`バックエンドとして検出するため、GUIのGPU一覧では`AMD Vulkan INT8 GPU`を選択します。throughputは固定バッファでGPUの完了フェンスまで待ち、ホストとの入出力コピーを除外します。latencyとE2Eはコピーを含みます。ホストからも見えるGPUバッファを使い、GPUによるメモリアクセスは推論時間に含まれます。API上の演算精度と実行結果は確認しますが、GPU命令の逆アセンブルは行いません。
 
+行列は16×16タイルごとに連続配置し、行列命令による飛び飛びのメモリー読み込みを減らします。定数の重みはコンパイル時に並べ替え、入力は毎回GPUの量子化処理内で並べ替えます。入力の並べ替え時間は測定に含みます。演算数・量子化条件は同じです。Radeon 840Mで4096×4096、throughput・並列数1、各3秒の交互測定を3回行った中央値は、変更前1.514 TOPS、変更後3.851 TOPSでした（約2.54倍）。これはこの機器・条件での実測結果です。
+
 シェーダーのGLSLソースとSPIR-Vを`fairbench/shaders/`に同梱し、ソース・バイナリーのハッシュを検査します。実行にシェーダーコンパイラーは不要です。再生成には[Khronos glslang 16.6.0](https://github.com/KhronosGroup/glslang/releases/tag/16.6.0)を使い、`python -m scripts.build_vulkan_shaders --compiler <glslang.exeのパス>`を実行します。Vulkanの演算定義は[KHR_cooperative_matrix仕様](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_KHR_cooperative_matrix.html)に基づきます。
 
 Windows ML経由で呼ぶ場合は、Windows MLカタログのTensorRT-RTX EPを使います（前述のTensorRT 10直接実行とは別のランタイムです）。[対応機器・条件](https://learn.microsoft.com/windows/ai/new-windows-ml/supported-execution-providers)を確認し、次を実行してください。

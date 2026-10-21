@@ -7,6 +7,7 @@ import struct
 from unittest.mock import patch
 
 import numpy as np
+from onnx import numpy_helper
 
 from fairbench import models
 from fairbench.backends.base import BackendError
@@ -15,6 +16,7 @@ from fairbench.backends.vulkan_backend import (
     VulkanBackend,
     _int8_property,
     _model_parameters,
+    _pack_weights,
     _spirv_int8_evidence,
     _vector_grid,
     probe_runtime,
@@ -29,6 +31,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hardware", action="store_true")
     args = parser.parse_args()
+    # Check tile coordinates, including nonsquare matrices and signed values.
+    for k, n in ((32, 64), (96, 32)):
+        weights = np.random.default_rng(42).integers(-128, 128, (k, n), dtype=np.int8)
+        packed = _pack_weights(weights).reshape(n//16, k//16, 16, 16)
+        for column in range(n//16):
+            for inner in range(k//16):
+                np.testing.assert_array_equal(packed[column, inner].T,
+                                              weights[inner*16:(inner+1)*16, column*16:(column+1)*16])
     profile = json.loads((SHADERS / "manifest.json").read_text())
     for elements in (64**2, 512*1024, 4096**2):
         x, y = _vector_grid(elements)
@@ -92,7 +102,7 @@ def main():
     for name in ("AType", "BType", "CType", "ResultType"):
         assert _int8_property(v, [{**prop, name: v.VK_COMPONENT_TYPE_FLOAT32_KHR}]) is None
     backend = VulkanBackend()
-    for size in (64, 512):
+    for size in (32, 64, 96, 512):
         model = models.build_precision_gemm("int8", size)
         compiled = backend.compile(model, target, RunConfig(), "int8")
         feed = model.make_inputs()
@@ -102,6 +112,13 @@ def main():
         options.intra_op_num_threads = 1
         expected = ort.InferenceSession(model.serialise(), options, providers=["CPUExecutionProvider"]).run(None, feed)[0]
         actual = backend.run(compiled, feed)[0]
+        # Verify the integer product itself, before output rounding can hide a
+        # layout error. This also proves that input/weight packing is lossless.
+        values = {t.name: numpy_helper.to_array(t) for t in model.model.graph.initializer}
+        quantized = np.clip(np.rint(feed["x"] / values["input_scale"]), -128, 127).astype(np.int32)
+        product = quantized @ values["weight"].astype(np.int32)
+        accumulated = np.frombuffer(compiled.handle.buffers[3][1], dtype=np.int32).reshape(size, size)
+        np.testing.assert_array_equal(accumulated, product)
         assert np.max(np.abs(actual-expected)) <= 1/16
         assert np.linalg.norm(actual-expected) / np.linalg.norm(expected) < .002
         run, read = backend.prepare_resident(compiled, feed, target)
