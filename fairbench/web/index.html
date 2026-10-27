@@ -31,10 +31,20 @@
 </header>
 
 <nav class="view-nav" aria-label="画面切り替え">
-  <a href="#overview">概要</a><a href="#performance">測定データ</a><a href="#devices">機器情報</a><a href="#environment">信頼性・条件</a><a href="#history">実行履歴</a>
+  <a href="#overview">概要</a><a href="#performance">測定データ</a><a href="#devices">機器情報</a><a href="#environment">信頼性・条件</a><a href="#history">実行履歴</a><a href="#report">報告書</a>
 </nav>
 <main class="layout">
   <div class="content">
+    <section id="reportPage" data-view="report" hidden>
+      <div class="report-actions">
+        <h2>プレゼンテーション・報告書</h2>
+        <p>PowerPointには各ブロックの「画像をコピー」からCtrl+Vで貼り付けできます。「PNGで保存」から画像ファイルとして挿入することもできます。</p>
+        <p>表示中の測定結果をまとめて保存します。HTMLはアプリなしで開けます。PDFは印刷画面で「PDFに保存」を選んでください。</p>
+        <button class="btn primary" id="saveReportBtn" disabled>HTMLで保存</button>
+        <button class="btn ghost" id="printReportBtn" disabled>印刷・PDFで保存</button>
+      </div>
+      <div id="reportContent"><p class="empty">保存する測定結果がありません。計測するか、実行履歴から結果を選んでください。</p></div>
+    </section>
     <section class="overview" data-view="overview" id="overview">
       <div class="overview-heading">
         <div><p class="eyebrow">計測結果の概要</p><p class="overview-machine" id="overviewMachine">計測結果を読み込み中…</p></div>

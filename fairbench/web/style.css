@@ -4,6 +4,14 @@
    offline so a benchmark machine never needs the network.
    ========================================================================== */
 
+.report-actions { margin-bottom: 24px; }
+.report-image-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.report-image { padding: 32px; background: white; color: var(--text); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+.report-image > section { margin: 20px 0; }
+.report-image .table-wrap { overflow: visible; max-height: none; }
+.report-image .bar, .report-image .ring-fg { transition: none !important; }
+#reportContent > section { margin: 24px 0; }
+.saved-report { max-width: 1440px; margin: auto; padding: 32px; }
 :root {
   --bg: #f4f6fa;
   --panel: #ffffff;
@@ -458,4 +466,19 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--cyan); outline-
   .device-meter { margin-bottom: 8px; }
   .device-card.unmeasured .device-index { font-size: 26px; line-height: 1.6; }
   .overview-links a { padding: 8px 12px; }
+}
+
+@media print {
+  @page { size: A4 landscape; margin: 12mm; }
+  body { background: white !important; font-size: 10pt; }
+  body > :not(main), .content > :not(#reportPage), .report-actions { display: none !important; }
+  main.layout, .content, #reportPage, .saved-report { display: block !important; margin: 0; padding: 0; max-width: none; width: 100%; }
+  #reportContent { overflow-wrap: anywhere; }
+  .table-wrap { overflow: visible; max-height: none; }
+  .data-table { min-width: 0; font-size: 7pt; }
+  .data-table th, .data-table td { white-space: normal; padding: 4px; }
+  .device-card, .prov, tr { break-inside: avoid; }
+  .report-image-actions { display: none !important; }
+  thead { display: table-header-group; }
+  * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
 }

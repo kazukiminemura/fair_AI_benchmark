@@ -503,6 +503,7 @@ function renderAll() {
   renderProvenance(rep);
   renderMatrix();
   renderOverview();
+  renderReport();
 }
 
 /* Keep the overview focused on indices, coverage and validity. */
@@ -553,6 +554,7 @@ function renderOverview() {
 const VIEWS = {
   overview: '概要', performance: '測定データ', devices: '機器情報',
   environment: '信頼性・計測条件', history: '実行履歴', method: '計測方法', activity: '実行ログ',
+  report: '報告書',
 };
 function renderRoute() {
   const requested = location.hash.slice(1);
@@ -566,6 +568,141 @@ function renderRoute() {
   });
   $('viewTitle').textContent = VIEWS[view];
   document.title = `fairbench · ${VIEWS[view]}`;
+  if (view === 'report') renderReport();
+}
+
+function renderReport() {
+  const host = $('reportContent');
+  const available = !!state.report;
+  $('saveReportBtn').disabled = !available;
+  $('printReportBtn').disabled = !available;
+  if (!available) return;
+  host.replaceChildren(el('h1', {}, 'AI性能測定 報告書'));
+  host.appendChild(el('p', { class: 'muted' }, `測定日時: ${new Date(state.report.started_at * 1000).toLocaleString('ja-JP')} / 元データ: ${state.activeFile || '表示中の結果'}`));
+  host.appendChild(el('p', {}, '表示値はモデルの実測処理性能です。メーカーの理論ピーク性能ではありません。未測定・未確認の値は性能ゼロを意味しません。'));
+  for (const id of ['overview', 'indexChart', 'throughputChart', 'radarChart', 'resultTable', 'precisionDetails', 'grade', 'provenance']) {
+    const source = $(id);
+    const section = source.closest('section').cloneNode(true);
+    for (const node of [section, ...section.querySelectorAll('*')]) {
+      if (node.id) node.id = 'report-' + node.id;
+      for (const attr of [...node.attributes]) {
+        if (attr.value.includes('url(#')) node.setAttribute(attr.name, attr.value.replace(/url\(#/g, 'url(#report-'));
+        if (attr.name === 'aria-labelledby') node.setAttribute(attr.name, attr.value.split(' ').map((id) => 'report-' + id).join(' '));
+      }
+      node.removeAttribute('data-view');
+    }
+    section.hidden = false;
+    section.querySelectorAll('a').forEach((link) => link.remove());
+    section.querySelectorAll('button').forEach((button) => button.remove());
+    section.querySelectorAll('[data-report-width]').forEach((bar) => {
+      bar.style.transition = 'none';
+      bar.setAttribute('width', bar.dataset.reportWidth);
+    });
+    const ring = section.querySelector('.ring-fg');
+    if (ring) ring.style.strokeDashoffset = String(2 * Math.PI * 36 * (1 - Math.max(0, Math.min(1, (state.report.grade?.score ?? 0) / 100))));
+    // The report describes the selected saved result, even during a new run.
+    const status = section.querySelector('.overview-status');
+    if (status) status.remove();
+    host.appendChild(section);
+    const actions = el('div', { class: 'report-image-actions' });
+    for (const [action, label] of [['copy', '画像をコピー'], ['save', 'PNGで保存']]) {
+      const button = el('button', { class: 'btn ghost small', type: 'button' }, label);
+      button.onclick = () => exportReportImage(section, action, id, button);
+      actions.appendChild(button);
+    }
+    section.appendChild(actions);
+  }
+}
+
+function reportStyles() {
+  return [...document.styleSheets].map((sheet) => [...sheet.cssRules].map((rule) => rule.cssText).join('\n')).join('\n');
+}
+
+function downloadReportBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = el('a', { href: url, download: filename });
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+async function reportImageBlob(section) {
+  const width = Math.ceil(Math.max(1440, ...[...section.querySelectorAll('.table-wrap')].map((table) => table.scrollWidth + 96)));
+  const frame = el('div', { class: 'report-image', style: `width:${width}px;position:fixed;left:-100000px;top:0` });
+  frame.appendChild(el('h2', {}, `AI性能測定 · ${state.report.system?.cpu?.name || 'このPC'}`));
+  frame.appendChild(el('p', { class: 'muted' }, `測定日時: ${new Date(state.report.started_at * 1000).toLocaleString('ja-JP')} / 元データ: ${state.activeFile || '表示中の結果'}`));
+  const content = section.cloneNode(true);
+  content.querySelectorAll('.report-image-actions').forEach((node) => node.remove());
+  frame.appendChild(content);
+  frame.appendChild(el('p', { class: 'muted' }, 'fairbench · モデルの実測処理性能。メーカーの理論ピーク性能ではありません。未測定・未確認の値は性能ゼロを意味しません。'));
+  document.body.appendChild(frame);
+  try {
+    await document.fonts.ready;
+    const height = Math.ceil(frame.getBoundingClientRect().height);
+    // Freeze the measured layout: SVG images have their own viewport, which
+    // would otherwise trigger the dashboard's small-screen media queries.
+    const snapshots = [frame, ...frame.querySelectorAll('*')].map((node) => {
+      const computed = getComputedStyle(node);
+      const styles = [...computed].map((name) => `${name}:${computed.getPropertyValue(name).replace(/url\(["']?[^)"']*#([^)"']+)["']?\)/g, 'url(#$1)')}`).join(';');
+      return [node, styles];
+    });
+    for (const [node, styles] of snapshots) node.setAttribute('style', styles);
+    frame.style.position = 'static';
+    frame.style.removeProperty('left');
+    frame.style.removeProperty('top');
+    const markup = new XMLSerializer().serializeToString(frame);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><foreignObject width="100%" height="100%">${markup}</foreignObject></svg>`;
+    const image = new Image();
+    const loaded = new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error('image rendering failed')); });
+    image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    // Remove the measuring copy before yielding to the browser for rendering.
+    frame.remove();
+    await loaded;
+    const scale = Math.min(2, 16000 / width, 16000 / height);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(width * scale);
+    canvas.height = Math.ceil(height * scale);
+    const context = canvas.getContext('2d');
+    context.scale(scale, scale);
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0);
+    return await new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('PNG encoding failed')), 'image/png'));
+  } finally {
+    frame.remove();
+  }
+}
+
+async function exportReportImage(section, action, id, button) {
+  button.disabled = true;
+  try {
+    if (action === 'copy') {
+      if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') throw new Error('clipboard unavailable');
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': reportImageBlob(section) })]);
+      toast('画像をコピーしました。PowerPointでCtrl+Vを押して貼り付けてください');
+    } else {
+      downloadReportBlob(await reportImageBlob(section), `fairbench-${id}.png`);
+      toast('PNGのダウンロードを開始しました。PowerPointに画像として挿入できます');
+    }
+  } catch (error) {
+    toast(action === 'copy' ? '画像をコピーできませんでした。「PNGで保存」から画像を保存してください' : '画像を保存できませんでした。再読み込みして再度お試しください', true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function saveReport() {
+  if (!state.report) return;
+  try {
+    const content = $('reportContent').cloneNode(true);
+    content.querySelectorAll('.report-image-actions').forEach((node) => node.remove());
+    const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI性能測定 報告書</title><style>${reportStyles()}</style></head><body><main class="saved-report" id="reportContent">${content.innerHTML}</main></body></html>`;
+    downloadReportBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), `fairbench-report-${String(state.activeFile || state.report.started_at).replace(/[^a-zA-Z0-9_.-]/g, '_').replace(/\.json$/i, '')}.html`);
+    toast('報告書HTMLのダウンロードを開始しました');
+  } catch (error) {
+    toast('報告書を保存できませんでした。再読み込みして再度お試しください', true);
+  }
 }
 
 function renderHero(rep) {
@@ -614,7 +751,7 @@ function renderIndexChart(rep) {
   const rows = ((rep.scores || {}).ai_index || []).filter((r) => r.ai_index);
   if (!rows.length) { host.innerHTML = '<p class="empty">run the suite to populate this chart</p>'; return; }
   const max = Math.max(...rows.map((r) => r.ai_index), 1.0001);
-  const rowH = 34, padL = 168, padR = 74, top = 8;
+  const rowH = 34, padL = 300, padR = 74, top = 8;
   const h = top + rows.length * rowH + 8;
   const width = 900;
   const s = svg('svg', { viewBox: `0 0 ${width} ${h}`, preserveAspectRatio: 'xMinYMin meet' });
@@ -637,7 +774,7 @@ function renderIndexChart(rep) {
     lg.appendChild(svg('stop', { offset: '1', 'stop-color': colour, 'stop-opacity': '1' }));
     defs.appendChild(lg);
     s.appendChild(defs);
-    const bar = svg('rect', { x: padL, y: y + 5, width: 0, height: 17, rx: 5, fill: `url(#${id})`, class: 'bar' });
+    const bar = svg('rect', { x: padL, y: y + 5, width: 0, 'data-report-width': w, height: 17, rx: 5, fill: `url(#${id})`, class: 'bar' });
     const txt = svg('text', { x: padL + 9, y: y + 18, class: 'bar-value', fill: '#05060c' }, `${fmt(r.ai_index)}×`);
     if (w < 46) { txt.setAttribute('x', padL + w + 8); txt.setAttribute('fill', colour); }
     s.appendChild(bar); s.appendChild(txt);
@@ -752,7 +889,7 @@ function renderThroughput(rep) {
       const by = item.y + i * (barH + gap) + 4;
       const colour = deviceColor(r);
       const w = Math.max(3, (r.units_per_s / item.max) * (width - padL - padR));
-      const bar = svg('rect', { x: padL, y: by, width: 0, height: barH, rx: 4, fill: colour, opacity: '0.92', class: 'bar' });
+      const bar = svg('rect', { x: padL, y: by, width: 0, 'data-report-width': w, height: barH, rx: 4, fill: colour, opacity: '0.92', class: 'bar' });
       const detail = `${r.target_label || r.target_id}\n${item.wl} · ${(r.precision || '').toUpperCase()}\n${fmt(r.units_per_s, 2)} ${unitOf(item.wl)}`;
       bar.appendChild(svg('title', {}, detail));
       bar.setAttribute('aria-label', detail);
@@ -1191,6 +1328,8 @@ async function copyLog() {
   }
 }
 $('copyLogBtn').onclick = copyLog;
+$('saveReportBtn').onclick = saveReport;
+$('printReportBtn').onclick = () => { if (state.report) window.print(); };
 $('newRunBtn').onclick = openModal;
 $('cancelRun').onclick = () => { $('runModal').hidden = true; };
 $('confirmRun').onclick = startRun;
