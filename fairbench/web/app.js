@@ -388,6 +388,7 @@ function renderStatic() {
   const chips = $('hostChips');
   chips.innerHTML = '';
   const cpu = sys.cpu || {};
+  chips.appendChild(el('span', { class: 'chip' }, `PCメーカー: ${sys.manufacturer || '不明'} / ${sys.model || '機種不明'}`));
   chips.appendChild(el('span', { class: 'chip' }, ''));
   chips.lastChild.innerHTML = `<span class="dot"></span><b>${esc(cpu.name || 'cpu')}</b> ${cpu.physical_cores || '?'}C/${cpu.logical_cores || '?'}T`;
   if (sys.memory && sys.memory.total_gib) chips.appendChild(el('span', { class: 'chip', html: `memory <b>${sys.memory.total_gib} GiB</b>${sys.memory.speed_mts ? ' @ ' + sys.memory.speed_mts : ''}` }));
@@ -480,7 +481,7 @@ function renderRunList() {
     const btn = el('button', { class: 'run-item' + (r.file === state.activeFile ? ' active' : '') });
     btn.innerHTML = `
       <div class="r-top">
-        <span class="r-name">${esc(r.host || 'unknown')}</span>
+        <span class="r-name">${esc(r.manufacturer || 'メーカー不明')} · ${esc(r.host || 'unknown')}</span>
         ${r.grade ? `<span class="grade-pill grade-${esc(r.grade)}">${esc(r.grade)}</span>` : ''}
       </div>
       <div class="r-sub"><span>${esc((r.device || '').slice(0, 38))}</span></div>
@@ -510,7 +511,7 @@ function renderAll() {
 function renderOverview() {
   const rep = state.report;
   const sys = (rep || state.catalog || {}).system || {};
-  $('overviewMachine').textContent = (sys.cpu || {}).name || 'このPC';
+  $('overviewMachine').textContent = machineLabel(sys);
   $('overviewDate').textContent = rep
     ? new Date(rep.started_at * 1000).toLocaleString('ja-JP') + ' の計測 · 履歴 →'
     : '過去の結果を見る →';
@@ -571,6 +572,17 @@ function renderRoute() {
   if (view === 'report') renderReport();
 }
 
+function machineLabel(sys = {}) {
+  return `${sys.manufacturer || 'メーカー不明'} / ${sys.model || '機種不明'} / ${sys.cpu?.name || 'CPU不明'}`;
+}
+
+function reportFilename(section, extension) {
+  const sys = state.report?.system || {};
+  const part = (value) => String(value).replace(/[^\p{L}\p{N}_.-]+/gu, '-').replace(/^[._-]+|[._-]+$/g, '').slice(0, 72).replace(/[._-]+$/g, '') || 'unknown';
+  const source = String(state.activeFile || state.report?.started_at || 'report').replace(/\.json$/i, '');
+  return ['fairbench', part(sys.manufacturer || 'unknown-maker'), part(sys.cpu?.name || 'unknown-cpu'), part(section), part(source)].join('-') + '.' + extension;
+}
+
 function renderReport() {
   const host = $('reportContent');
   const available = !!state.report;
@@ -578,6 +590,9 @@ function renderReport() {
   $('printReportBtn').disabled = !available;
   if (!available) return;
   host.replaceChildren(el('h1', {}, 'AI性能測定 報告書'));
+  const sys = state.report.system || {};
+  host.appendChild(el('p', {}, `PCメーカー: ${sys.manufacturer || '不明'} / 機種: ${sys.model || '不明'} / CPU: ${sys.cpu?.name || '不明'}`));
+  if (sys.computer_identity_recorded_at) host.appendChild(el('p', { class: 'muted' }, `PCメーカー・機種は測定後の${new Date(sys.computer_identity_recorded_at * 1000).toLocaleString('ja-JP')}にこのPCから取得して追記しました。`));
   host.appendChild(el('p', { class: 'muted' }, `測定日時: ${new Date(state.report.started_at * 1000).toLocaleString('ja-JP')} / 元データ: ${state.activeFile || '表示中の結果'}`));
   host.appendChild(el('p', {}, '表示値はモデルの実測処理性能です。メーカーの理論ピーク性能ではありません。未測定・未確認の値は性能ゼロを意味しません。'));
   for (const id of ['overview', 'indexChart', 'throughputChart', 'radarChart', 'resultTable', 'precisionDetails', 'grade', 'provenance']) {
@@ -630,7 +645,7 @@ function downloadReportBlob(blob, filename) {
 async function reportImageBlob(section) {
   const width = Math.ceil(Math.max(1440, ...[...section.querySelectorAll('.table-wrap')].map((table) => table.scrollWidth + 96)));
   const frame = el('div', { class: 'report-image', style: `width:${width}px;position:fixed;left:-100000px;top:0` });
-  frame.appendChild(el('h2', {}, `AI性能測定 · ${state.report.system?.cpu?.name || 'このPC'}`));
+  frame.appendChild(el('h2', {}, `AI性能測定 · ${machineLabel(state.report.system)}`));
   frame.appendChild(el('p', { class: 'muted' }, `測定日時: ${new Date(state.report.started_at * 1000).toLocaleString('ja-JP')} / 元データ: ${state.activeFile || '表示中の結果'}`));
   const content = section.cloneNode(true);
   content.querySelectorAll('.report-image-actions').forEach((node) => node.remove());
@@ -682,7 +697,7 @@ async function exportReportImage(section, action, id, button) {
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': reportImageBlob(section) })]);
       toast('画像をコピーしました。PowerPointでCtrl+Vを押して貼り付けてください');
     } else {
-      downloadReportBlob(await reportImageBlob(section), `fairbench-${id}.png`);
+      downloadReportBlob(await reportImageBlob(section), reportFilename(id, 'png'));
       toast('PNGのダウンロードを開始しました。PowerPointに画像として挿入できます');
     }
   } catch (error) {
@@ -697,8 +712,8 @@ function saveReport() {
   try {
     const content = $('reportContent').cloneNode(true);
     content.querySelectorAll('.report-image-actions').forEach((node) => node.remove());
-    const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI性能測定 報告書</title><style>${reportStyles()}</style></head><body><main class="saved-report" id="reportContent">${content.innerHTML}</main></body></html>`;
-    downloadReportBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), `fairbench-report-${String(state.activeFile || state.report.started_at).replace(/[^a-zA-Z0-9_.-]/g, '_').replace(/\.json$/i, '')}.html`);
+    const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI性能測定 報告書 · ${esc(machineLabel(state.report.system))}</title><style>${reportStyles()}</style></head><body><main class="saved-report" id="reportContent">${content.innerHTML}</main></body></html>`;
+    downloadReportBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), reportFilename('report', 'html'));
     toast('報告書HTMLのダウンロードを開始しました');
   } catch (error) {
     toast('報告書を保存できませんでした。再読み込みして再度お試しください', true);
@@ -711,7 +726,7 @@ function renderHero(rep) {
   const scores = rep.scores || {};
   const best = (scores.ai_index || [])[0];
   $('heroEyebrow').textContent = `${sys.hostname || 'host'} · ${new Date((rep.started_at || 0) * 1000).toLocaleString()}`;
-  $('heroTitle').textContent = (sys.cpu && sys.cpu.name) || 'unknown cpu';
+  $('heroTitle').textContent = machineLabel(sys);
   const meta = $('heroMeta');
   meta.innerHTML = '';
   [
@@ -1073,6 +1088,9 @@ function renderProvenance(rep) {
   };
 
   block('machine', [
+    ['PCメーカー', sys.manufacturer || '不明'],
+    ['機種', sys.model || '不明'],
+    sys.computer_identity_recorded_at ? ['PC情報の追記日時', new Date(sys.computer_identity_recorded_at * 1000).toLocaleString('ja-JP')] : null,
     ['host', sys.hostname],
     ['cpu', (sys.cpu || {}).name],
     ['cores', `${(sys.cpu || {}).physical_cores}C / ${(sys.cpu || {}).logical_cores}T`],
@@ -1329,7 +1347,12 @@ async function copyLog() {
 }
 $('copyLogBtn').onclick = copyLog;
 $('saveReportBtn').onclick = saveReport;
-$('printReportBtn').onclick = () => { if (state.report) window.print(); };
+$('printReportBtn').onclick = () => {
+  if (!state.report) return;
+  const title = document.title;
+  document.title = reportFilename('report', 'pdf').replace(/\.pdf$/i, '');
+  try { window.print(); } finally { document.title = title; }
+};
 $('newRunBtn').onclick = openModal;
 $('cancelRun').onclick = () => { $('runModal').hidden = true; };
 $('confirmRun').onclick = startRun;

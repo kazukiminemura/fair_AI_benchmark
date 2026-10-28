@@ -54,6 +54,7 @@ def cmd_devices(args: argparse.Namespace) -> int:
     fp = system.collect()
     disc = discover(fp)
     print(f"{c('MACHINE', BOLD)}")
+    print(f"  PC maker   {fp.manufacturer or 'unknown'}  /  {fp.model or 'unknown model'}")
     print(f"  CPU        {fp.cpu.name}  ({fp.cpu.physical_cores}C/{fp.cpu.logical_cores}T)")
     print(f"  Memory     {fp.memory.total_gib} GiB" + (f" @ {fp.memory.speed_mts} MT/s" if fp.memory.speed_mts else ""))
     for module in fp.memory.modules:
