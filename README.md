@@ -96,6 +96,30 @@ FP16モデルがCPUでFP32実行される場合や、INT8モデルでもネイ�
 正解照合はCPUのFP32参照に対し、全出力の形状・有限値と、各出力最大16,384要素の相対L2誤差（既定5%以内）を確認します。
 旧方式の保存結果や未記録の分離時間を補うには、再計測してください。
 
+## ARMチップのGPU
+
+Apple Silicon（Mシリーズ・Aシリーズ）のmacOSでは、通常の `uv sync` でインストールされるONNX RuntimeのCoreML EPを自動検出します。`uv run fairbench devices` で `ORT CoreML CPU + GPU` を確認し、画面で選択するか、次のコマンドで測定できます。
+
+```sh
+uv run fairbench run --targets ort:CoreMLExecutionProvider --quick --gemm-size 512 --no-int8 --no-open
+```
+
+FP32・FP16モデルを対象にします。CoreMLは `MLComputeUnits=CPUAndGPU` とし、Neural Engineを除外します。ただしCoreML内部のCPU使用は許可されるため、GPU単独性能とは区別してください。結果JSONと警告にこの範囲を記録し、ORT側のCPUノードへのフォールバックは無効にします。この環境ではINT8 GEMMは未対応で、測定失敗として記録します。`--no-int8` で除外できます。その他の未対応モデルも測定失敗として記録します。ネイティブ演算精度・GPU常駐I/Oは未確認です。
+
+Windows on ARMのSnapdragonは、実際に利用可能なWindows ML / DirectMLプロバイダーがある場合にAdreno GPUを表示します。ARM CPUで動くだけではGPU対応とは判定しません。Linux ARMのMali等は現時点で専用GPUバックエンド未対応です。
+
+### Apple Neural Engine（NPU）
+
+Apple Siliconでは `ORT CoreML CPU + Neural Engine` をNPUの測定対象として選択できます。GPUとは独立したターゲットIDです。macOS 13以降が必要です。
+
+```sh
+uv run fairbench run --targets ort:CoreMLExecutionProvider:npu --quick --gemm-size 4096 --no-int8 --no-open
+```
+
+CoreMLを `MLComputeUnits=CPUAndNeuralEngine` に固定し、GPUを除外します。ORT CPU EPへのフォールバックも禁止します。ただしCoreML内部のCPU処理は許可されるため、**Neural Engineでの実行やNPU単独性能は未確認**です。この制約はラベル・結果JSON・警告に記録します。FP32・FP16モデルが対象で、未対応のモデルは失敗として記録します。ネイティブINT8 TOPSは測定しません。
+
+CoreML設定の仕様は[ONNX Runtime公式ドキュメント](https://onnxruntime.ai/docs/execution-providers/CoreML-ExecutionProvider.html)を参照してください。
+
 ## GPU・NPUとスマートフォン
 
 GPUの合計処理性能を測る場合は、詳細設定で「throughput」を選択します。対応GPUでは入出力バッファを再利用し、指定並列数（自動なら1・2・4・8）の処理量を測ります。概要の主値は並列処理全体のスループットで、単発の分離推論時間から換算した値とは区別します。OpenVINOの固定リクエストにはランタイム内部転送が含まれ、純粋なGPUカーネル性能ではありません。

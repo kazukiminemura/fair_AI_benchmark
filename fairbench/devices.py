@@ -11,7 +11,7 @@ result too.
 from __future__ import annotations
 
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from . import system
@@ -46,6 +46,11 @@ SLOTS: list[Slot] = [
 # Devices we can benchmark but that are not part of the Intel-vs-AMD comparison.
 EXTRA_SLOTS: list[Slot] = [
     Slot("nvidia:gpu", "nvidia", "gpu", "NVIDIA GPU", "CUDA / TensorRT EP"),
+    Slot("apple:cpu", "apple", "cpu", "Apple Silicon CPU", "ONNX Runtime CPU EP"),
+    Slot("apple:npu", "apple", "npu", "Apple Neural Engine (CoreML CPU + NPU)", "CoreML EP (CPUAndNeuralEngine; GPU disabled)"),
+    Slot("apple:gpu", "apple", "gpu", "Apple GPU (CoreML CPU + GPU)", "CoreML EP (CPUAndGPU; Neural Engine disabled)"),
+    Slot("qualcomm:cpu", "qualcomm", "cpu", "Qualcomm CPU (Snapdragon)", "ONNX Runtime CPU EP"),
+    Slot("qualcomm:gpu", "qualcomm", "gpu", "Qualcomm GPU (Adreno)", "Windows ML / DirectML"),
     Slot("qualcomm:npu", "qualcomm", "npu", "Qualcomm NPU (Hexagon)", "QNN EP"),
 ]
 
@@ -134,7 +139,7 @@ _ORT_EP_LABEL = {
     "OpenVINOExecutionProvider": "OpenVINO",
     "VitisAIExecutionProvider": "Vitis AI NPU",
     "QNNExecutionProvider": "Qualcomm QNN NPU",
-    "CoreMLExecutionProvider": "CoreML",
+    "CoreMLExecutionProvider": "CoreML CPU + GPU",
 }
 
 def _ort_targets(fp: system.SystemFingerprint) -> tuple[list[Target], str, list[str]]:
@@ -214,6 +219,8 @@ def _ort_targets(fp: system.SystemFingerprint) -> tuple[list[Target], str, list[
                 precisions = ["fp32", "fp16"]
             if ep in ("VitisAIExecutionProvider", "QNNExecutionProvider"):
                 precisions = ["int8", "fp16"]
+            if ep == "CoreMLExecutionProvider":
+                precisions = ["fp32", "fp16"]
             if ep == "CPUExecutionProvider":
                 precisions = ["fp32", "int8"]
 
@@ -238,6 +245,15 @@ def _ort_targets(fp: system.SystemFingerprint) -> tuple[list[Target], str, list[
                     options={"interpreter": info.path, "interpreter_label": info.label},
                 )
             )
+            if ep == "CoreMLExecutionProvider" and fp.cpu.vendor == "apple":
+                # One EP exposes two distinct compute-unit policies. Keep the
+                # existing GPU target ID stable and give ANE its own identity.
+                targets.append(replace(
+                    targets[-1], id=f"ort:{ep}:npu" + (f"@{info.label}" if not info.primary else ""),
+                    kind="npu", label="ORT CoreML CPU + Neural Engine" + (f" ({info.label})" if not info.primary else ""),
+                    detail=f"{fp.cpu.name} Neural Engine",
+                    options={**targets[-1].options, "provider_options": {"MLComputeUnits": "CPUAndNeuralEngine"}},
+                ))
 
     missing = [
         ("DmlExecutionProvider", "onnxruntime-directml", "any DirectX 12 GPU on Windows, including NVIDIA and AMD Radeon, with no CUDA install"),
@@ -445,6 +461,8 @@ def discover(fingerprint: system.SystemFingerprint | None = None, include_openvi
 
 def _reason_for(slot: Slot, fp: system.SystemFingerprint) -> str:
     if slot.kind == "npu":
+        if slot.vendor == "apple":
+            return "Apple Neural Engine requires Apple Silicon, macOS 13+ and CoreMLExecutionProvider. CPUAndNeuralEngine permits internal CPU execution and excludes the GPU."
         if slot.vendor == "intel":
             return "No Intel NPU present (requires Core Ultra with AI Boost), or its driver/OpenVINO NPU plugin is unavailable."
         if slot.vendor == "amd":
@@ -459,6 +477,10 @@ def _reason_for(slot: Slot, fp: system.SystemFingerprint) -> str:
             )
         return "No NPU device found."
     if slot.kind == "gpu":
+        if slot.vendor == "apple":
+            return "CoreMLExecutionProvider unavailable. Install a macOS ONNX Runtime build with CoreML support (uv sync); CPUAndGPU allows CPU execution and excludes the Neural Engine."
+        if slot.vendor == "qualcomm":
+            return "Adreno requires a compatible Windows ML / DirectML GPU provider and driver. ARM CPU support alone does not provide GPU execution."
         a = fp.find_adapter("gpu", slot.vendor)
         if a:
             return (
