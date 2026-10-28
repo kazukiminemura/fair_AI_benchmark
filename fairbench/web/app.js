@@ -7,7 +7,7 @@ const $ = (id) => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
 
 const KIND_COLOR = { cpu: '#2563eb', gpu: '#15803d', npu: '#7c3aed' };
-const VENDOR_COLOR = { intel: '#4f9dff', amd: '#ff5a5f', nvidia: '#3f7a0a', qualcomm: '#7c3aed' };
+const VENDOR_COLOR = { intel: '#4f9dff', amd: '#ff5a5f', nvidia: '#3f7a0a', qualcomm: '#7c3aed', apple: '#94a3b8' };
 
 const METHOD = [
   ['Identical work.', 'Every device runs byte-identical ONNX graphs generated from a fixed seed. Model hashes are printed below.'],
@@ -421,7 +421,7 @@ function renderMatrix() {
   const cat = state.catalog;
   if (!cat) return;
   const caps = (cat.discovery && cat.discovery.capabilities) || {};
-  const order = ['intel:cpu', 'intel:gpu', 'intel:npu', 'amd:cpu', 'amd:gpu', 'amd:npu', 'nvidia:gpu', 'qualcomm:npu'];
+  const order = ['intel:cpu', 'intel:gpu', 'intel:npu', 'amd:cpu', 'amd:gpu', 'amd:npu', 'nvidia:gpu', 'apple:cpu', 'apple:gpu', 'apple:npu', 'qualcomm:cpu', 'qualcomm:gpu', 'qualcomm:npu'];
   const verified = {};
   if (state.report && state.report.targets) state.report.targets.forEach((t) => { verified[t.id] = t; });
   wrap.innerHTML = '';

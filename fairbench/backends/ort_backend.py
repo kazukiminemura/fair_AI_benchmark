@@ -10,6 +10,7 @@ suite.
 from __future__ import annotations
 
 import json
+import platform
 import tempfile
 import time
 from pathlib import Path
@@ -56,6 +57,11 @@ class OrtBackend(Backend):
                 opts.setdefault("device_type", dev)
             opts.setdefault("precision", {"int8": "INT8", "fp16": "FP16", "fp32": "FP32"}.get(precision, "FP32"))
             opts.setdefault("num_of_threads", "0")
+        elif ep == "CoreMLExecutionProvider":
+            # Select an explicit policy; never mix GPU and ANE measurements.
+            opts["MLComputeUnits"] = "CPUAndNeuralEngine" if target.kind == "npu" else "CPUAndGPU"
+            opts.setdefault("ModelFormat", "MLProgram")
+            opts.setdefault("RequireStaticInputShapes", "1")
         elif ep == "DmlExecutionProvider":
             opts.setdefault("device_id", "0")
             opts.setdefault("disable_graph_capture", "0")
@@ -119,11 +125,15 @@ class OrtBackend(Backend):
         return built.serialise()
 
     def compile(self, built: BuiltModel, target: Target, cfg: RunConfig, precision: str) -> CompiledModel:
+        if target.device == "CoreMLExecutionProvider" and target.kind == "npu":
+            version = platform.mac_ver()[0].split(".")[0]
+            if platform.system() != "Darwin" or not version.isdigit() or int(version) < 13:
+                raise BackendError("CoreML CPUAndNeuralEngine requires macOS 13 or newer.")
         providers = [target.device]
         provider_options = [self._model_provider_options(built, target, precision)]
         # Always keep the CPU EP as a silent fallback so a partially assignable
         # graph still runs; unassigned nodes are visible via `fallback_used`.
-        if target.device != "CPUExecutionProvider" and not built.key.startswith("precision_gemm_"):
+        if target.device not in ("CPUExecutionProvider", "CoreMLExecutionProvider") and not built.key.startswith("precision_gemm_"):
             providers.append("CPUExecutionProvider")
             provider_options.append({})
 
@@ -131,8 +141,11 @@ class OrtBackend(Backend):
         if built.key.startswith("precision_gemm_"):
             if precision == "int4":
                 raise BackendError("INT4 QDQ GEMM requires verified native INT4 execution; this ONNX Runtime backend cannot verify it. Dequantized FP32 throughput is not reported as INT4 TOPS.")
-            if target.kind != "cpu":
+            if target.kind != "cpu" and target.device != "CoreMLExecutionProvider":
                 so.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
+        if target.device == "CoreMLExecutionProvider":
+            # Reject ORT CPU nodes instead of reporting CPU-only accelerator results.
+            so.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
         started = time.perf_counter()
         try:
             session = self.ort.InferenceSession(
@@ -146,12 +159,21 @@ class OrtBackend(Backend):
         compile_ms = (time.perf_counter() - started) * 1000
 
         active = session.get_providers()
+        if target.device == "CoreMLExecutionProvider" and target.device not in active:
+            raise BackendError("CoreML provider initialization failed; refusing to measure CPU fallback as an accelerator.")
         return CompiledModel(
             handle=session,
             compile_ms=compile_ms,
             precision=precision,
             output_names=[o.name for o in session.get_outputs()],
             meta={
+                **({"execution_scope": "coreml_cpu_and_neural_engine" if target.kind == "npu" else "coreml_cpu_and_gpu",
+                    "accelerator_execution_verified": False,
+                    "execution_note": (
+                        "CoreML CPUAndNeuralEngine excludes GPU but permits internal CPU execution; Neural Engine execution and native arithmetic precision are unverified. This is not NPU-only throughput."
+                        if target.kind == "npu" else
+                        "CoreML CPUAndGPU excludes Neural Engine but permits internal CPU execution; GPU-only execution and native arithmetic precision are unverified.")}
+                   if target.device == "CoreMLExecutionProvider" else {}),
                 "execution_providers": active,
                 "requested_provider": target.device,
                 "provider_options": provider_options[0],

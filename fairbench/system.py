@@ -208,6 +208,8 @@ def classify_vendor(text: str) -> str:
         return "nvidia"
     if "qualcomm" in t or "snapdragon" in t or "hexagon" in t or "adreno" in t:
         return "qualcomm"
+    if "apple" in t:
+        return "apple"
     if "microsoft" in t or "basic" in t or "warp" in t:
         return "microsoft"
     return "unknown"
@@ -226,6 +228,9 @@ _GPU_RE = re.compile(
 
 def classify_kind(name: str) -> str:
     t = name or ""
+    # Snapdragon appears in NPU names too; Adreno identifies its GPU.
+    if "adreno" in t.lower():
+        return "gpu"
     if _NPU_RE.search(t):
         return "npu"
     if _GPU_RE.search(t):
@@ -254,6 +259,12 @@ def _collect_cpu() -> CpuInfo:
             info.base_clock_mhz = r.get("MaxClockSpeed")
             info.current_clock_mhz = r.get("CurrentClockSpeed")
             info.l3_cache_kb = r.get("L3CacheSize")
+    if platform.system() == "Darwin":
+        info.name = _run(["sysctl", "-n", "machdep.cpu.brand_string"]).strip() or info.name
+        for attr, key in (("physical_cores", "hw.physicalcpu"), ("logical_cores", "hw.logicalcpu")):
+            value = _run(["sysctl", "-n", key]).strip()
+            if value.isdigit():
+                setattr(info, attr, int(value))
     if not info.logical_cores:
         info.logical_cores = os.cpu_count() or 0
     if not info.physical_cores:
@@ -291,6 +302,10 @@ def _collect_memory() -> MemoryInfo:
             mem.total_gib = round(total / 1024**3, 1)
         if speeds:
             mem.speed_mts = max(speeds)
+    if mem.total_gib is None and platform.system() == "Darwin":
+        value = _run(["sysctl", "-n", "hw.memsize"]).strip()
+        if value.isdigit():
+            mem.total_gib = round(int(value) / 1024**3, 1)
     if mem.total_gib is None:
         try:
             import psutil  # type: ignore
@@ -377,6 +392,16 @@ def _collect_adapters() -> list[AdapterInfo]:
                     extra={"device_id": r.get("DeviceID")},
                 )
             )
+    if platform.system() == "Darwin":
+        try:
+            displays = json.loads(_run(["system_profiler", "SPDisplaysDataType", "-json"]))
+        except (ValueError, TypeError):
+            displays = {}
+        for device in displays.get("SPDisplaysDataType", []):
+            name = device.get("sppci_model") or device.get("_name")
+            if name:
+                found.append(AdapterInfo(name=name, vendor=classify_vendor(name), kind="gpu",
+                                         extra={"metal_support": device.get("spdisplays_metal") or device.get("spdisplays_mtlgpufamilysupport")}))
     return found
 
 

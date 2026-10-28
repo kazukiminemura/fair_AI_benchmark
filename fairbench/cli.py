@@ -423,6 +423,8 @@ def cmd_setup_gpu(args: argparse.Namespace) -> int:
         packages += ["tensorrt-cu12==10.13.3.9", "cuda-python>=12,<13", "onnxruntime"]
     elif args.cuda:
         packages += ["onnxruntime-gpu", "nvidia-cublas-cu12", "nvidia-cudnn-cu12"]
+    elif sys.platform == "darwin":
+        packages += ["onnxruntime>=1.20"]
     else:
         packages += ["onnxruntime-directml"]
     print(f"{c('installing', BOLD)} {' '.join(packages)}")

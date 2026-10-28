@@ -283,6 +283,8 @@ def run_cell(job: dict[str, Any]) -> dict[str, Any]:
 
     result["session"] = compiled.meta
     result["compile_ms"] = compiled.compile_ms
+    if compiled.meta.get("execution_note"):
+        warnings.append(compiled.meta["execution_note"])
     if compiled.meta.get("fallback_used"):
         warnings.append(
             f"requested {compiled.meta.get('requested_provider')} but "
