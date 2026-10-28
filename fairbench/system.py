@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 IS_WINDOWS = sys.platform.startswith("win")
@@ -173,6 +174,8 @@ class SystemFingerprint:
     adapters: list[AdapterInfo] = field(default_factory=list)
     power: PowerInfo = field(default_factory=PowerInfo)
     scores: dict[str, Any] = field(default_factory=dict)
+    manufacturer: str | None = None
+    model: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -452,6 +455,30 @@ def probe_background_load(samples: int = 3) -> float | None:
         return None
 
 
+def _collect_computer() -> tuple[str | None, str | None]:
+    """PC maker/model, independently of the CPU and motherboard vendor."""
+    def clean(value):
+        value = str(value or "").strip()
+        return None if value.lower() in ("", "unknown", "default string", "system manufacturer",
+                                         "system product name", "to be filled by o.e.m.") else value
+
+    if IS_WINDOWS:
+        data = _powershell_json("Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer,Model | ConvertTo-Json -Compress")
+        data = data if isinstance(data, dict) else {}
+        return clean(data.get("Manufacturer")), clean(data.get("Model"))
+    if platform.system() == "Linux":
+        values = []
+        for name in ("sys_vendor", "product_name"):
+            try:
+                values.append(clean((Path('/sys/class/dmi/id') / name).read_text()))
+            except OSError:
+                values.append(None)
+        return tuple(values)
+    if platform.system() == "Darwin":
+        return "Apple", clean(_run(["sysctl", "-n", "hw.model"]))
+    return None, None
+
+
 def collect() -> SystemFingerprint:
     version = platform.version()
     fp = SystemFingerprint(
@@ -463,6 +490,7 @@ def collect() -> SystemFingerprint:
         arch=platform.machine(),
         python=platform.python_version(),
     )
+    fp.manufacturer, fp.model = _collect_computer()
     fp.cpu = _collect_cpu()
     fp.memory = _collect_memory()
     fp.adapters = _collect_adapters()

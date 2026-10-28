@@ -40,8 +40,12 @@ def format_compute_rate(row: dict[str, Any]) -> str:
     return f"{value / 1e12:.3f} TFLOPS"
 
 
-def default_name(prefix: str = "fairbench") -> str:
+def default_name(prefix: str = "fairbench", system: dict[str, Any] | None = None) -> str:
     stamp = time.strftime("%Y%m%d-%H%M%S")
+    if system is not None:
+        parts = [system.get("manufacturer") or "unknown-maker", (system.get("cpu") or {}).get("name") or "unknown-cpu"]
+        parts = [re.sub(r"[^\w.-]+", "-", str(part)).strip(".-_")[:72].rstrip(".-_") or "unknown" for part in parts]
+        prefix = "-".join([prefix, *parts])
     return f"{prefix}-{stamp}.json"
 
 
@@ -73,10 +77,10 @@ def format_execution_precision(row: dict[str, Any]) -> str:
 def save(report: dict[str, Any], path: str | Path | None = None) -> Path:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     if path is None:
-        path = RESULTS_DIR / default_name()
+        path = RESULTS_DIR / default_name(system=report.get("system") or {})
     path = Path(path)
     if path.is_dir():
-        path = path / default_name()
+        path = path / default_name(system=report.get("system") or {})
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(json_safe(report), indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
     return path
@@ -124,6 +128,7 @@ def list_results(directory: str | Path | None = None) -> list[dict[str, Any]]:
                 "score": (data.get("grade") or {}).get("score"),
                 "device": (data.get("system") or {}).get("cpu", {}).get("name"),
                 "host": (data.get("system") or {}).get("hostname"),
+                "manufacturer": (data.get("system") or {}).get("manufacturer"),
                 "targets": len([r for r in data.get("results", []) if r.get("ok")]),
             }
         )
@@ -134,7 +139,8 @@ def headline(report: dict[str, Any]) -> str:
     sysinfo = report.get("system") or {}
     cpu = (sysinfo.get("cpu") or {}).get("name", "unknown CPU")
     host = sysinfo.get("hostname") or "unknown"
-    return f"{host} - {cpu}"
+    maker = sysinfo.get("manufacturer") or "メーカー不明"
+    return f"{maker} / {host} - {cpu}"
 
 
 def brief(report: dict[str, Any]) -> dict[str, Any]:
