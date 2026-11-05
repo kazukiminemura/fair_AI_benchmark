@@ -44,7 +44,7 @@ uv run fairbench run --targets VitisAIExecutionProvider --workloads precision_ge
 ## 配布物ごとの確認
 
 1. **新しいソーススナップショット / wheel / sdist:** MIT本文・第三者ライセンス索引を同梱します。sdistにはこの文書と寄稿方針も含めます。SDK・キャッシュ・測定結果・削除済み設定が混入していないことをアーカイブ内で確認してください。
-2. **履歴付きGitリポジトリ:** 旧AMD設定のパスを全ローカル参照から `git-filter-repo` で除外済みです。main・3タグの履歴に対象パスがなく、内部スナップショットのツリーにも対象ファイルがないことを検証しました。作業前の完全なbundleと未コミット差分はリポジトリ外の非公開バックアップに保存します。公開済みmain・v1.0・v1.1・v1.2への反映には履歴の強制更新が必要です。公開側への反映状況は `git ls-remote` と `.git/filter-repo/commit-map` で照合してください。他者のfork・clone、GitHubの到達不能オブジェクトやキャッシュまで消したことは意味しません。
+2. **履歴付きGitリポジトリ:** 旧AMD設定のパスを全ローカル参照から `git-filter-repo` で除外済みです。main・3タグの履歴に対象パスがなく、内部スナップショットのツリーにも対象ファイルがないことを検証しました。作業前の完全なbundleと未コミット差分はリポジトリ外の非公開バックアップに保存します。公開済みmain・v1.0・v1.1・v1.2へ、旧SHA一致を条件とするatomicなforce-with-leaseで反映済みです。新規mirror cloneとGitHub生成の3タグのソースアーカイブにも対象パスがないことを検証しました。ローカルと公開mainのSHAも一致しています。他者のfork・clone、GitHubの到達不能オブジェクトやキャッシュまで消したことは意味しません。
 3. **Windows実行形式ZIP:** `scripts/build.ps1` がビルド環境のLICENSE・NOTICE・COPYING・AUTHORSとPythonのLICENSE.txtを収集し、版とハッシュを `THIRD_PARTY_LICENSES/inventory.json` に保存します。ライセンス本文が見つからないパッケージはビルドを止めます。収集は許諾の自動判定ではありません。ローカル設定 `*.local.json` はソース配布・wheel・ZIPのコピー対象から除外します。
 4. **Windows x64 ZIPのネイティブDLL:** 下記の版・構成について配布条件と出所を確認しました。`NATIVE_INVENTORY.json` が全DLL・PYD・EXEのSHA256・コンポーネント・版・出所を記録します。未確認の出所・版やMicrosoftシステムランタイムの混入はビルドを失敗させます。ZIPはMITソースと、個別のライセンスに従うランタイムを合わせた配布物です。ZIP内の全DLLをMITと呼ばないでください。
 5. **古い配布物:** 作成済みZIP・wheel・ソースアーカイブは自動で修正されません。今回の変更から再ビルドしたものを使い、既存リリース添付物も個別に差し替えてください。
@@ -117,3 +117,17 @@ Windows ZIPの `THIRD_PARTY_SOURCES/` に以下の原ソースを同梱します
 ライブラリーのDLL・PYD自体は改変していません。fairbenchのMIT条件やDirectMLの条件は、MPL対象ソースに対する権利を制限しません。
 根拠はMPL-2.0第3.1・3.2条と[Mozillaの配布FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/)。
 アーカイブの元URLとSHA256は `THIRD_PARTY_SOURCES/inventory.json` に記録し、ビルド・配布検証の両方で照合します。
+
+## GitHub側に残る旧コミットの直アクセス
+
+通常のGit履歴・main・全タグ・新規clone・タグのソースアーカイブから旧AMD設定は除外済みです。
+ただし、2026-11-05のGitHub API確認では旧commit `1c1f00c33015d51eb10800513f1ff16a22503273` を指定すると、
+旧設定blob `b74daefd6e3d5dedf97270d2d800a5d76ad0996e` へアクセスできました。サーバー上の完全消去とは区別します。
+
+[GitHub公式資料](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)
+も、履歴更新後の旧SHA経由アクセスが残ることを説明しています。サーバー側GC・キャッシュ処理は利用者のGit操作だけでは実行できません。
+さらに同資料では、GitHub Supportは非機密データの削除には対応しない旨を明記しています。
+今回の設定を秘密情報・認証情報であるかのように扱って削除申請してはいません。
+
+この作業で完了した範囲は、現行公開履歴と新しい配布物の整理です。旧SHAのサーバー完全消去、第三者の保存済みコピーの回収、
+元設定の許諾取得が完了したとは主張しません。旧cloneを持つ場合は新しくcloneし直し、旧履歴をmerge/pushしないでください。
