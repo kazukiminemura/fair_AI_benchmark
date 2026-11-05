@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import sys
 import urllib.request
 import zipfile
@@ -23,6 +24,14 @@ REVIEWED_VERSIONS = {
     "onnxruntime-directml": "1.24.4", "protobuf": "7.36.2", "Python": "3.12.10",
     "Microsoft.AI.DirectML": DML_VERSION, "fairbench + PyInstaller bootloader": "6.22.3",
 }
+SOURCES = [
+    {"filename": "ml_dtypes-0.6.0.tar.gz", "component": "ml_dtypes 0.6.0 including vendored Eigen",
+     "url": "https://files.pythonhosted.org/packages/12/72/307d7c4bd0600601c7133fba5cb78af7db968152951c1cd473abb1cda782/ml_dtypes-0.6.0.tar.gz",
+     "sha256": "5e60251d32ced5598972e4d5e06a2f044341f9291402551a3f6f0ec44f9299b0"},
+    {"filename": "eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33.zip", "component": "Eigen in ONNX Runtime build 2d924974ef",
+     "url": "https://codeload.github.com/eigen-mirror/eigen/zip/1d8b82b0740839c0de7f1242a3585e3390ff5f33",
+     "sha256": "6a60d76351f97132669daeeb721d6bf14b008101883ad2d687a3201c5c461eb0"},
+]
 
 
 def digest(path):
@@ -75,6 +84,33 @@ def filter_binaries(binaries):
     return selected
 
 
+def include_sources(bundle):
+    destination = bundle / "THIRD_PARTY_SOURCES"
+    destination.mkdir(parents=True, exist_ok=True)
+    cache = ROOT / ".cache" / "third-party-sources"
+    cache.mkdir(parents=True, exist_ok=True)
+    for source in SOURCES:
+        archive = cache / source["filename"]
+        if not archive.is_file() or digest(archive) != source["sha256"]:
+            with urllib.request.urlopen(source["url"], timeout=30) as response:
+                payload = response.read()
+            if hashlib.sha256(payload).hexdigest() != source["sha256"]:
+                raise ValueError(f"Third-party source changed: {source['filename']}")
+            archive.write_bytes(payload)
+        shutil.copyfile(archive, destination / source["filename"])
+    (destination / "inventory.json").write_text(json.dumps(SOURCES, indent=2) + "\n", encoding="utf-8")
+    (destination / "README.txt").write_text(
+        "Corresponding sources for the MPL-2.0 Eigen portions in the bundled libraries.\n"
+        "Open the archives in this directory; their original notices/licenses apply.\n"
+        "The covered files are available under MPL-2.0; Apache-2.0 and other parts\n"
+        "keep their own licenses. fairbench does not modify the bundled libraries.\n"
+        "ml_dtypes includes its Eigen snapshot under third_party/eigen/.\n"
+        "ONNX Runtime's exact build commit 2d924974ef selects Eigen 1d8b82b... in cmake/deps.txt.\n"
+        "No fee, account or separate download is needed to access these source archives.\n",
+        encoding="utf-8",
+    )
+
+
 def audit(bundle):
     """Match every shipped native file to the pinned runtime or installed input."""
     origins = {}
@@ -120,3 +156,4 @@ if __name__ == "__main__":
     parser.add_argument("--bundle", type=Path, required=True)
     args = parser.parse_args()
     audit(args.bundle)
+    include_sources(args.bundle)

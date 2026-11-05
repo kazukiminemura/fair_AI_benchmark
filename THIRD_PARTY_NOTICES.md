@@ -67,6 +67,14 @@ copy from that user's installed runtime locally, outside the distributed ZIP.
 `NATIVE_INVENTORY.json` records the shipped native inputs and hashes.
 See `docs/LICENSING.md` for the reviewed versions, sources, and release check.
 
+For MPL-2.0-covered Eigen portions, the ZIP includes corresponding source
+archives in `THIRD_PARTY_SOURCES/`, with original license notices. The
+ml_dtypes 0.6.0 sdist includes its Eigen snapshot; a separate pinned archive
+provides Eigen selected by ONNX Runtime build commit 2d924974ef. Recipients
+may use and modify the covered source under MPL-2.0, without any restriction
+from fairbench's MIT terms or DirectML's separate terms. No library binary
+has been modified. See that directory's README.txt and inventory.json.
+
 Python's additional native component license texts are supplemented in
 `THIRD_PARTY_LICENSES/native/`: OpenSSL 3.0.16, Expat 2.7.1, zlib 1.3.1,
 and the liblzma portion of xz 5.2.5. Python's own LICENSE.txt includes bzip2,

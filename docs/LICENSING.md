@@ -68,7 +68,7 @@ PyInstallerの結合実行形式に対する例外は、
 | NumPyのMSVCP別名 | 一部のwheelはMSVCPをハッシュ付き名で参照する。配布するのは必要なファイル名だけ。`start-fairbench.cmd` が `prepare-runtime.ps1` を実行し、利用者のSystem32に導入済みのMSVCPからローカルコピーを作る。第三者バイナリーの改変・再リンクは行わない。このローカルコピーは再配布ZIPへ含めない。 |
 | CPython 3.12.10 | Pythonソースと標準拡張を改変せずアプリに組み込む。インタープリターのLICENSE.txt、PSFの著作権・変更概要を保持。OpenSSL 3.0.16（Apache-2.0）、libffi 3.4.4（MIT）、bzip2 1.0.8、liblzma/xz 5.2.5のライブラリー部分（public domain）、zlib 1.3.1（Zlib）、Expat 2.7.1（MIT）の条文・表示を補完する。 |
 | NumPy 2.5.4 / OpenBLAS / LAPACK | wheelのライセンスディレクトリーをそのまま収集。OpenBLASのBSD、LAPACKのBSD、GCC runtimeのGPL-3.0-or-later WITH GCC-exception-3.1も保持する。GCC例外の対象であるランタイムの結合だけを理由にfairbench全体をGPLへ変更しない。 |
-| ONNX 1.23.2 / ORT DirectML 1.24.4 / ml_dtypes 0.6.0 / protobuf 7.36.2 / cffi 2.1.1 | インストール済みwheelと同一バイトのネイティブコードだけを採用し、各LICENSE・NOTICEを保持。Eigen等の追加条項も収集する。 |
+| ONNX 1.23.2 / ORT DirectML 1.24.4 / ml_dtypes 0.6.0 / protobuf 7.36.2 / cffi 2.1.1 | インストール済みwheelと同一バイトのネイティブコードだけを採用し、各LICENSE・NOTICEを保持。Eigen等の追加条項も収集する。EigenのMPL-2.0対象部分については、ml_dtypesのEigen同梱sdistと、ORTの実ビルドcommit `2d924974ef` の `cmake/deps.txt` が指定するEigen commit `1d8b82b0740839c0de7f1242a3585e3390ff5f33` の原ソースをZIPに同梱する。 |
 | PyInstaller 6.22.3 | 生成EXEのbootloader例外とruntime hookの条文を保持。PyInstaller自身を単独の製品として再配布しない。 |
 
 DirectMLの固定値:
@@ -105,3 +105,15 @@ uv run python -m scripts.check_licenses --artifacts dist --frozen dist/fairbench
 
 GitHubに公開済みのv1.1・v1.2リリースには、確認時点で添付アセットがありませんでした。
 GitHubが生成するソースアーカイブは更新後のタグを基準にしてください。手元の旧ZIPは使用しないでください。
+
+## MPL-2.0対象部分のソース入手
+
+Windows ZIPの `THIRD_PARTY_SOURCES/` に以下の原ソースを同梱します。利用者は追加料金・アカウント・別途の通信なしで取得できます。
+
+1. `ml_dtypes-0.6.0.tar.gz`: PyPIの公式sdist。`third_party/eigen/` に、この版が使用するEigenのソースと元のライセンスが含まれています。
+2. `eigen-1d8b82b0740839c0de7f1242a3585e3390ff5f33.zip`: ORT実ビルドcommitが指定するEigen。ダウンロードしたアーカイブのSHA1もORTの `cmake/deps.txt` の値と一致しています。
+
+これらのEigen対象ファイルはMPL-2.0に従って利用・改変できます。他のライセンスが付いたファイルは各条文に従います。
+ライブラリーのDLL・PYD自体は改変していません。fairbenchのMIT条件やDirectMLの条件は、MPL対象ソースに対する権利を制限しません。
+根拠はMPL-2.0第3.1・3.2条と[Mozillaの配布FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/)。
+アーカイブの元URLとSHA256は `THIRD_PARTY_SOURCES/inventory.json` に記録し、ビルド・配布検証の両方で照合します。

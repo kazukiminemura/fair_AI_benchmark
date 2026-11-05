@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from scripts.collect_licenses import collect
-from scripts.native_release import DML_SHA256, filter_binaries, system_runtime
+from scripts.native_release import DML_SHA256, SOURCES, filter_binaries, system_runtime
 
 
 def check_collection():
@@ -93,6 +93,9 @@ def check_frozen(artifact):
                 data = archive.read("THIRD_PARTY_LICENSES/" + entry["path"])
                 assert hashlib.sha256(data).hexdigest() == entry["sha256"], entry["path"]
         natives = json.loads(archive.read("NATIVE_INVENTORY.json"))
+        assert json.loads(archive.read("THIRD_PARTY_SOURCES/inventory.json")) == SOURCES
+        for source in SOURCES:
+            assert hashlib.sha256(archive.read("THIRD_PARTY_SOURCES/" + source["filename"])).hexdigest() == source["sha256"]
         native_names = {name for name in names if Path(name).suffix.lower() in {".dll", ".pyd", ".exe"}}
         assert native_names == {record["path"] for record in natives}
         for record in natives:
