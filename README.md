@@ -126,9 +126,9 @@ GPUの合計処理性能を測る場合は、詳細設定で「throughput」を�
 
 NPUのthroughput測定でも、OpenVINOとWindows ML Vitis AIで入出力バッファを再利用します。自動並列数は1・2・4・8・16・32です。Vitis AIではホスト側のバッファを固定するため、NPU内部の転送・変換時間は残ります。Windows MLにも共通のVitis AIプロバイダー設定を渡し、適用した設定を各試行の`session.provider_options`へ記録します。
 
-Vitis AIのINT8精度別GEMMでは、既定のX2ターゲットに対して同梱の`fairbench/vitisai_int8_gemm.json`を適用し、`enable_matmul_to_conv=false`を指定します。4096×4096の実機測定で、MatMulを畳み込みへ変換する経路に過剰な演算・転送が生じたためです。ONNXモデル、量子化、演算数は変更しません。ユーザー指定の`config_file`・`target_opts`・`xclbin`、およびX2以外の明示的ターゲットは優先し、この最適化を追加しません。
+Vitis AIのINT8精度別GEMMでは、メーカー由来のコンパイラー設定を同梱せず、既定設定を使います。自身で利用権限を確認したローカル設定がある場合は、`FAIRBENCH_VITISAI_CONFIG` にファイルのパスを指定できます。指定はX2のINT8精度別GEMMに限り、ユーザー指定の`config_file`・`target_opts`・`xclbin`、X2以外の明示的ターゲットを優先します。存在しない設定ファイルはエラーにします。
 
-この設定はWindows ML 2.4.89 / ORT 1.27.1のVitis AI EP（メタデータ版0.1.0）が出力したX2パス設定を基に、上記変換を無効にしたものです。Ryzen AI 7 445、ドライバー32.0.203.329で検証しています。このEPは単独の`target_opts`指定を反映しなかったため、パス設定を含めています。ランタイム更新時は互換性・性能を再検証してください。設定が非対応の場合、別精度やCPUへ切り替えて成功扱いにはしません。
+以前の版で同梱していた設定による自動最適化は適用しません。NPUの速度が変わる可能性があるため、旧版と比較する際は設定をそろえて再測定してください。指定例と権利上の扱いは[公開・再配布の権利整理](docs/LICENSING.md)を参照してください。
 
 Vitis AIの「CPUフォールバック禁止」は、ONNX RuntimeのCPU EPへの割当を禁止する設定です。Vitis AI内部のCPU処理まで禁止するものではありません。したがって、INT8モデルのTOPSや分離推論時間を、ネイティブINT8のNPUカーネル性能と同一視できません。
 
@@ -208,8 +208,19 @@ LAN公開はスマホ用ページに限定され、PCの測定・履歴APIは公
 uv run python -m scripts.check_refactor
 uv run python -m scripts.check_precision
 uv run python -m scripts.check_diagnostics
+uv run python -m scripts.check_licenses
 pwsh -File scripts/check-web.ps1
 uv run ruff check fairbench scripts
 ```
 
-Windows配布物は`pwsh -File scripts/build.ps1`で作成します。ZIPはPython不要のCPU・DirectML版で、OpenVINOを含みません。
+Windows x64配布物は`pwsh -File scripts/build.ps1`で作成します。ZIPはPython不要のCPU・DirectML版で、OpenVINOを含みません。利用先には[Microsoft公式のVC++ x64 Redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist)が必要です。全体を展開し、`start-fairbench.cmd`から起動してください。必要なローカルランタイムを準備してから画面を開きます。
+
+## ライセンス・再配布
+
+自作コード・文書・UI・画面画像は [MIT License](LICENSE) で提供します。商用利用・改変・再配布が可能で、著作権表示とライセンス本文を保持する必要があります。第三者のライブラリー・SDK・ドライバーには各配布元の条件が適用されます。
+
+1. [第三者ライセンス一覧](THIRD_PARTY_NOTICES.md)で依存関係と同梱素材の扱いを確認できます。
+2. [公開・再配布の権利整理](docs/LICENSING.md)には、旧AMD設定の履歴整理と、Windows x64配布物のDLLについて確認した版・許諾条件・同梱除外を記載しています。ZIPにはMIT以外の条件で配布するDirectML等が含まれます。
+3. [寄稿方針](CONTRIBUTING.md)に従い、自分が許諾権限を持つ変更だけを提出してください。
+
+ソース配布物は `uv build` で作成できます。Windowsビルドでは `THIRD_PARTY_LICENSES/` に実際のビルド環境のライセンス本文と版・ハッシュの一覧を同梱します。SDK・仮想環境・キャッシュ・ローカル設定をリポジトリや配布物へ追加しないでください。

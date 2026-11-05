@@ -161,7 +161,7 @@ def check_windowsml_selection() -> None:
     expected = {"config_file": "compiler.json", "cache_dir": "cache", "opt_level": "3"}
     options.add_provider_for_devices.assert_called_once_with([amd], expected)
     assert compiled.meta["provider_options"] == expected
-    # The model-specific profile must also reach the selected WinML device.
+    # No vendor-derived compiler profile is implicitly redistributed/applied.
     built.key = "precision_gemm_int8"
     target.options = {"winml_key": windowsml.device_info(amd)["key"]}
     options.reset_mock()
@@ -169,7 +169,7 @@ def check_windowsml_selection() -> None:
           patch.object(backend, "_model_source", return_value=b"model")):
         compiled = backend.compile(built, target, RunConfig(), "int8")
     applied = options.add_provider_for_devices.call_args.args[1]
-    assert Path(applied["config_file"]).is_file() and applied["target"] == "X2"
+    assert "config_file" not in applied
     assert compiled.meta["provider_options"] == applied
     print("Windows ML checks passed: explicit GPU/NPU distinction, strict CPU fallback rejection.")
 

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,8 +8,9 @@ version = "0.1.0"
 description = "Vendor-neutral AI benchmark for laptop CPU / GPU / NPU (Intel vs AMD)"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
-authors = [{ name = "fairbench" }]
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [{ name = "Kazuki Minemura" }]
 keywords = ["benchmark", "ai", "npu", "onnxruntime", "openvino", "intel", "amd", "laptop"]
 classifiers = [
     "Environment :: Console",
@@ -44,8 +45,8 @@ directml = ["onnxruntime-directml>=1.18; sys_platform == 'win32' and platform_ma
 fairbench = "fairbench.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/example/fairbench"
-Issues = "https://github.com/example/fairbench/issues"
+Homepage = "https://github.com/kazukiminemura/fair_AI_benchmark"
+Issues = "https://github.com/kazukiminemura/fair_AI_benchmark/issues"
 
 # --------------------------------------------------------------------------
 # Development / packaging. PEP 735 groups, understood by uv and pip 25+.
@@ -68,6 +69,9 @@ namespaces = false
 
 [tool.setuptools.package-data]
 fairbench = ["web/*", "*.ps1", "*.json", "shaders/*"]
+
+[tool.setuptools.exclude-package-data]
+fairbench = ["*.local.json", "**/*.local.json"]
 
 [tool.ruff]
 line-length = 120

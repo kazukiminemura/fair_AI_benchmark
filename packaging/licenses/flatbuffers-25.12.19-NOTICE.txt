@@ -1,0 +1,6 @@
+FlatBuffers Python runtime 25.12.19
+Copyright 2014 Google Inc. All rights reserved.
+
+License text: https://github.com/google/flatbuffers/blob/v25.12.19/LICENSE
+Copyright notice: flatbuffers/__init__.py in the installed 25.12.19 wheel.
+This supplement supplies the license text omitted from that Python wheel.

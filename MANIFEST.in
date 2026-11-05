@@ -1,0 +1,6 @@
+include LICENSE THIRD_PARTY_NOTICES.md CONTRIBUTING.md
+include uv.lock requirements.txt .python-version
+recursive-include docs *.md *.jpg
+recursive-include packaging *.py *.ps1 *.spec *.txt
+recursive-include scripts *.py *.ps1 *.js
+global-exclude *.local.json

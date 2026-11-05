@@ -10,6 +10,7 @@ suite.
 from __future__ import annotations
 
 import json
+import os
 import platform
 import tempfile
 import time
@@ -82,12 +83,15 @@ class OrtBackend(Backend):
                 and built.key == "precision_gemm_int8" and precision == "int8"
                 and opts.get("target", "X2") == "X2"
                 and not any(key in opts for key in ("config_file", "target_opts", "xclbin"))):
-            # X2's MatMul-to-Conv lowering inflated work and memory traffic on
-            # this GEMM. The WinML EP ignores a standalone target_opts override;
-            # use the tested X2 pass profile with integer MatMul preserved.
-            # Explicit compiler profiles always take precedence.
-            opts["config_file"] = str(Path(__file__).resolve().parents[1] / "vitisai_int8_gemm.json")
-            opts.setdefault("target", "X2")
+            # Vendor-derived profiles are not redistributed with fairbench.
+            # A user-owned local profile is optional; explicit options win.
+            local_profile = os.environ.get("FAIRBENCH_VITISAI_CONFIG")
+            if local_profile:
+                profile = Path(local_profile).expanduser().resolve()
+                if not profile.is_file():
+                    raise BackendError(f"FAIRBENCH_VITISAI_CONFIG is not a file: {profile}")
+                opts["config_file"] = str(profile)
+                opts.setdefault("target", "X2")
         return opts
 
     def _session_options(self, target: Target, cfg: RunConfig) -> Any:

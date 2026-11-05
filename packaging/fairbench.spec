@@ -23,16 +23,22 @@ Design choices, and why:
 """
 
 from pathlib import Path
+import sys
 
 import onnxruntime
 from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules
 
 ROOT = Path(SPECPATH).resolve().parent
+sys.path.insert(0, str(ROOT))
+from scripts.native_release import filter_binaries
 
 # The dashboard, extracted to sys._MEIPASS/web.
-datas = [(str(ROOT / "fairbench" / "web"), "web")]
-datas.append((str(ROOT / "fairbench" / "vitisai_int8_gemm.json"), "fairbench"))
-datas.append((str(ROOT / "fairbench" / "shaders"), "fairbench/shaders"))
+datas = []
+for directory, destination in (("web", "web"), ("shaders", "fairbench/shaders")):
+    source = ROOT / "fairbench" / directory
+    for path in source.rglob("*"):
+        if path.is_file() and not path.name.endswith(".local.json"):
+            datas.append((str(path), str(Path(destination) / path.relative_to(source).parent)))
 
 # ONNX Runtime's `transformers` helpers do bare top-level imports
 # (`from fusion_utils import NumpyHelper`), so PyInstaller cannot resolve them
@@ -95,6 +101,10 @@ a = Analysis(
     optimize=0,
 )
 pyz = PYZ(a.pure)
+
+# Windows 10+ provides API sets/UCRT. VC++ is installed by the end user.
+# Replace the wheel's DirectML with the reviewed official NuGet payload.
+a.binaries = filter_binaries(a.binaries)
 
 exe = EXE(
     pyz,

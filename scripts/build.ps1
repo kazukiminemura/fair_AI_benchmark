@@ -58,7 +58,7 @@ Write-Host " fairbench $version -> $platform" -ForegroundColor Magenta
 Write-Host ""
 
 Write-Host "[1/5] syncing the build environment from uv.lock" -ForegroundColor Cyan
-uv sync
+uv sync --locked
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if (-not $SkipWheel) {
@@ -93,10 +93,24 @@ if (-not $SkipFrozen) {
     Write-Host "[4/5] staging the supporting files" -ForegroundColor Cyan
     New-Item -ItemType Directory -Force -Path "$app\src" | Out-Null
     if (Test-Path "$app\src\fairbench") { Remove-Item -Recurse -Force "$app\src\fairbench" }
-    Copy-Item -Recurse -Force "fairbench" "$app\src\fairbench"
+    Copy-Item -Recurse -Force -Exclude '*.local.json' "fairbench" "$app\src\fairbench"
     Get-ChildItem -Path "$app\src" -Recurse -Directory -Filter "__pycache__" |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
+    # Use the actual frozen-build interpreter, not the developer's active venv.
+    $buildPython = if ($platform -eq 'win64') { '.venv-build/Scripts/python.exe' } else { '.venv-build/bin/python' }
+    & (Join-Path $root $buildPython) scripts/collect_licenses.py --output "$app/THIRD_PARTY_LICENSES"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & (Join-Path $root $buildPython) scripts/native_release.py --bundle $app
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Copy-Item -Recurse -Force 'packaging/licenses' "$app/THIRD_PARTY_LICENSES/native"
+    Copy-Item -Force 'packaging/prepare-runtime.ps1' "$app/prepare-runtime.ps1"
+    # Only names are shipped; Microsoft's DLL is copied locally by the end user.
+    $privateRuntimeNames = @(Get-ChildItem -Path '.venv-build/Lib/site-packages/numpy.libs' -Filter 'msvcp140-*.dll' | Select-Object -ExpandProperty Name)
+    ConvertTo-Json -InputObject $privateRuntimeNames | Set-Content -Encoding utf8 "$app/LOCAL_RUNTIME_NAMES.json"
+    Copy-Item -Force "LICENSE" "$app\LICENSE"
+    Copy-Item -Force "THIRD_PARTY_NOTICES.md" "$app\THIRD_PARTY_NOTICES.md"
+    Copy-Item -Force "docs\LICENSING.md" "$app\LICENSING.md"
     Copy-Item -Force "README.md" "$app\README.md"
     Copy-Item -Force "docs\METHODOLOGY.md" "$app\METHODOLOGY.md"
     Copy-Item -Force "pyproject.toml" "$app\pyproject.toml"
@@ -105,6 +119,8 @@ if (-not $SkipFrozen) {
     $cmd = @(
         "@echo off",
         "cd /d `"%~dp0`"",
+        'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0prepare-runtime.ps1"',
+        'if errorlevel 1 (pause & exit /b 1)',
         '"%~dp0fairbench.exe" serve %*',
         "if errorlevel 1 pause"
     ) -join "`r`n"

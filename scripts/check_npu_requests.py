@@ -1,8 +1,10 @@
 """Regression check: uv run python -m scripts.check_npu_requests (CPU only)."""
 
-import json
+import os
+import tempfile
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -19,12 +21,25 @@ def main():
     npu = Target("npu", "winml", "VitisAIExecutionProvider", "npu", "amd", "NPU")
     built = build_precision_gemm("int8", 64)
     original_sha = built.sha256
-    opts = backend._model_provider_options(built, npu, "int8")
-    profile = json.loads(Path(opts["config_file"]).read_text())
-    assert opts["target"] == "X2"
-    dpu = next(p["passDpuParam"] for p in profile["passes"] if "passDpuParam" in p)
-    assert dpu["xcompilerAttrs"]["enable_matmul_to_conv"] == {"boolValue": False}
-    assert profile["targets"][0]["targetOpts"]["xcompilerAttrs"]["enable_matmul_to_conv"] == {"boolValue": False}
+    with patch.dict(os.environ, {"FAIRBENCH_VITISAI_CONFIG": ""}):
+        assert backend._model_provider_options(built, npu, "int8") == {}
+    with tempfile.TemporaryDirectory() as directory:
+        profile = Path(directory) / "compiler.local.json"
+        profile.write_text("{}", encoding="utf-8")
+        with patch.dict(os.environ, {"FAIRBENCH_VITISAI_CONFIG": str(profile)}):
+            opts = backend._model_provider_options(built, npu, "int8")
+            assert opts == {"config_file": str(profile.resolve()), "target": "X2"}
+            custom = replace(npu, options={"config_file": "user.json"})
+            assert backend._model_provider_options(built, custom, "int8") == {"config_file": "user.json"}
+            assert backend._model_provider_options(built, npu, "fp16") == {}
+            assert backend._model_provider_options(built, cpu, "int8") == {}
+        with patch.dict(os.environ, {"FAIRBENCH_VITISAI_CONFIG": str(profile.with_name("missing.json"))}):
+            try:
+                backend._model_provider_options(built, npu, "int8")
+            except BackendError as exc:
+                assert "FAIRBENCH_VITISAI_CONFIG" in str(exc)
+            else:
+                raise AssertionError("Missing local compiler profile was accepted")
     assert built.sha256 == original_sha and npu.options == {}
     # Do not override explicit compiler profiles or tune unrelated workloads.
     for explicit in ({"config_file": "user.json"}, {"target_opts": "{}"},
