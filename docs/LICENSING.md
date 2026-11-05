@@ -44,7 +44,7 @@ uv run fairbench run --targets VitisAIExecutionProvider --workloads precision_ge
 ## 配布物ごとの確認
 
 1. **新しいソーススナップショット / wheel / sdist:** MIT本文・第三者ライセンス索引を同梱します。sdistにはこの文書と寄稿方針も含めます。SDK・キャッシュ・測定結果・削除済み設定が混入していないことをアーカイブ内で確認してください。
-2. **履歴付きGitリポジトリ:** 旧AMD設定のパスを全ローカル参照（main・タグ・追跡参照・内部参照）から `git-filter-repo` で除外します。作業前の完全なbundleと未コミット差分はリポジトリ外の非公開バックアップに保存します。公開済みmain・v1.0・v1.1・v1.2への反映には履歴の強制更新が必要です。公開側への反映状況は `git ls-remote` と `.git/filter-repo/commit-map` で照合してください。他者のfork・clone、GitHubの到達不能オブジェクトやキャッシュまで消したことは意味しません。
+2. **履歴付きGitリポジトリ:** 旧AMD設定のパスを全ローカル参照から `git-filter-repo` で除外済みです。main・3タグの履歴に対象パスがなく、内部スナップショットのツリーにも対象ファイルがないことを検証しました。作業前の完全なbundleと未コミット差分はリポジトリ外の非公開バックアップに保存します。公開済みmain・v1.0・v1.1・v1.2への反映には履歴の強制更新が必要です。公開側への反映状況は `git ls-remote` と `.git/filter-repo/commit-map` で照合してください。他者のfork・clone、GitHubの到達不能オブジェクトやキャッシュまで消したことは意味しません。
 3. **Windows実行形式ZIP:** `scripts/build.ps1` がビルド環境のLICENSE・NOTICE・COPYING・AUTHORSとPythonのLICENSE.txtを収集し、版とハッシュを `THIRD_PARTY_LICENSES/inventory.json` に保存します。ライセンス本文が見つからないパッケージはビルドを止めます。収集は許諾の自動判定ではありません。ローカル設定 `*.local.json` はソース配布・wheel・ZIPのコピー対象から除外します。
 4. **Windows x64 ZIPのネイティブDLL:** 下記の版・構成について配布条件と出所を確認しました。`NATIVE_INVENTORY.json` が全DLL・PYD・EXEのSHA256・コンポーネント・版・出所を記録します。未確認の出所・版やMicrosoftシステムランタイムの混入はビルドを失敗させます。ZIPはMITソースと、個別のライセンスに従うランタイムを合わせた配布物です。ZIP内の全DLLをMITと呼ばないでください。
 5. **古い配布物:** 作成済みZIP・wheel・ソースアーカイブは自動で修正されません。今回の変更から再ビルドしたものを使い、既存リリース添付物も個別に差し替えてください。
@@ -95,3 +95,13 @@ uv run python -m scripts.check_licenses --artifacts dist --frozen dist/fairbench
 
 `--artifacts` はwheelとsdistの両方があるディレクトリーを指定します。`uv build --out-dir dist` で両方を生成できます。
 この監査の対象はWindows x64の上記固定版です。別OS・別Python版・依存更新は再確認が必要です。
+
+## 2026-11-05の実行確認
+
+1. 作業前bundleと変更保存後bundleをリポジトリ外へ作成し、`git bundle verify` で検証しました。バックアップは公開・同梱対象外です。
+2. 全参照の到達可能オブジェクトに旧AMD設定のパスがないこと、`git fsck --full --no-reflogs` が成功することを確認しました。
+3. Windows 11 x64上で、Microsoft公式NuGet由来のDirectMLを含む生成EXEが起動し、CPU・DirectML GPUでFP16の512角GEMMを実行、両方がCPU参照の正解照合を通過しました。これは互換性のスモークテストで、性能の比較結果としては扱いません。
+4. 配布用ZIPはMicrosoftランタイムを含めず、利用者がローカル準備したDLLを含む作業フォルダーは再梱包しません。ZIP自体の全ネイティブファイルとライセンス本文はハッシュで検証します。
+
+GitHubに公開済みのv1.1・v1.2リリースには、確認時点で添付アセットがありませんでした。
+GitHubが生成するソースアーカイブは更新後のタグを基準にしてください。手元の旧ZIPは使用しないでください。
